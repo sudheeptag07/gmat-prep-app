@@ -107,7 +107,7 @@ export function RegisterForm() {
       <button
         type="submit"
         disabled={state === 'registering' || state === 'uploading'}
-        className="mx-auto flex items-center gap-2 rounded-2xl px-3 py-3 text-lg font-semibold text-white transition hover:text-[#F14724] disabled:cursor-not-allowed disabled:opacity-70 md:text-xl"
+        className="mx-auto flex min-h-12 items-center gap-2 rounded-2xl border border-[#F14724]/70 bg-[#F14724]/20 px-6 py-3 text-lg font-semibold text-white transition hover:bg-[#F14724]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F14724]/80 disabled:cursor-not-allowed disabled:opacity-70 md:text-xl"
       >
         {state === 'registering' || state === 'uploading' ? (
           <>

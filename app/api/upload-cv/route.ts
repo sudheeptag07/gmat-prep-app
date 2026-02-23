@@ -30,14 +30,29 @@ export async function POST(request: Request) {
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const cvText = await extractPdfText(bytes);
-    const cvAnalysis = await analyzeCV(cvText);
+    let summary = 'CV uploaded successfully. AI summary is pending.';
+    let keySkills: string[] = [];
+    let aiStatus: 'computed' | 'pending' = 'pending';
 
-    await updateCandidateCV(parsed.data.candidateId, cvText, cvAnalysis.summary, bytes.toString('base64'), file.name || 'candidate-cv.pdf');
+    try {
+      const cvAnalysis = await analyzeCV(cvText);
+      summary = cvAnalysis.summary;
+      keySkills = cvAnalysis.keySkills;
+      aiStatus = 'computed';
+    } catch (analysisError) {
+      const message = (analysisError as Error).message || '';
+      if (!message.includes('429')) {
+        throw analysisError;
+      }
+    }
+
+    await updateCandidateCV(parsed.data.candidateId, cvText, summary, bytes.toString('base64'), file.name || 'candidate-cv.pdf');
 
     return NextResponse.json({
-      summary: cvAnalysis.summary,
-      keySkills: cvAnalysis.keySkills,
-      cvTextLength: cvText.length
+      summary,
+      keySkills,
+      cvTextLength: cvText.length,
+      aiStatus
     });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
