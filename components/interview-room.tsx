@@ -362,7 +362,7 @@ export function InterviewRoom({ candidateId }: Props) {
           <button
             onClick={startInterview}
             disabled={state === 'connecting' || state === 'completed' || candidate?.status === 'completed'}
-            className="inline-flex items-center gap-2 rounded-2xl px-4 py-3 text-lg font-semibold text-white transition hover:text-[#F14724] disabled:cursor-not-allowed disabled:opacity-60 md:text-xl"
+            className="inline-flex min-h-12 items-center gap-2 rounded-2xl border border-[#F14724]/70 bg-[#F14724]/20 px-6 py-3 text-lg font-semibold text-white transition hover:bg-[#F14724]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F14724]/80 disabled:cursor-not-allowed disabled:opacity-60 md:text-xl"
           >
             <Mic className="h-6 w-6" />
             Start Conversation
