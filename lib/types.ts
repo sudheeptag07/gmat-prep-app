@@ -21,6 +21,7 @@ export type Candidate = {
   email: string;
   cv_text: string | null;
   cv_summary: string | null;
+  cv_file_name: string | null;
   status: CandidateStatus;
   ai_score: number | null;
   score_status: ScoreStatus;

@@ -156,6 +156,16 @@ export function CandidateDetail({ id }: Props) {
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="glass-panel p-6">
           <h2 className="text-lg font-semibold">CV Summary</h2>
+          <div className="mt-2">
+            <a
+              href={`/api/candidates/${id}/cv`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex rounded-full border border-white/20 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-[#F14724]/60 hover:text-[#F14724]"
+            >
+              View Original CV PDF
+            </a>
+          </div>
           <p className="muted mt-3 whitespace-pre-wrap text-sm">{record.cv_summary || 'CV summary not available yet.'}</p>
         </section>
         <section className="glass-panel p-6">

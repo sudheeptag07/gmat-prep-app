@@ -137,6 +137,47 @@ function pickAudioUrl(body: Record<string, unknown>): string | null {
   );
 }
 
+async function fetchAudioUrlFromElevenLabs(callId: string): Promise<string | null> {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey || !callId) return null;
+
+  const endpoints = [
+    `https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(callId)}`,
+    `https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(callId)}/details`
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'xi-api-key': apiKey },
+        cache: 'no-store'
+      });
+      if (!response.ok) continue;
+      const payload = asRecord(await response.json());
+      const conversation = asRecord(payload.conversation);
+      const analysis = asRecord(payload.analysis);
+      const recording = asRecord(payload.recording);
+      const audioUrl = pickFirstString(
+        payload.audio_url,
+        payload.recording_url,
+        payload.audioUrl,
+        conversation.audio_url,
+        conversation.recording_url,
+        analysis.audio_url,
+        analysis.recording_url,
+        recording.url,
+        recording.audio_url
+      );
+      if (audioUrl) return audioUrl;
+    } catch {
+      // Best effort fallback only.
+    }
+  }
+
+  return null;
+}
+
 export async function POST(request: Request) {
   try {
     const body = asRecord(await request.json());
@@ -153,7 +194,7 @@ export async function POST(request: Request) {
 
     const callId = pickCallId(body, candidateId);
     const transcript = pickTranscript(body);
-    const audioUrl = pickAudioUrl(body);
+    const audioUrl = pickAudioUrl(body) || (await fetchAudioUrlFromElevenLabs(callId));
 
     let score: number | null = null;
     let scoreStatus: 'computed' | 'missing' | 'error' = 'missing';

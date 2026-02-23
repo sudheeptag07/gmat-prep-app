@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     const cvText = await extractPdfText(bytes);
     const cvAnalysis = await analyzeCV(cvText);
 
-    await updateCandidateCV(parsed.data.candidateId, cvText, cvAnalysis.summary);
+    await updateCandidateCV(parsed.data.candidateId, cvText, cvAnalysis.summary, bytes.toString('base64'), file.name || 'candidate-cv.pdf');
 
     return NextResponse.json({
       summary: cvAnalysis.summary,

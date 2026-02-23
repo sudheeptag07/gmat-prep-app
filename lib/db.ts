@@ -18,6 +18,8 @@ export async function ensureSchema() {
       email TEXT NOT NULL,
       cv_text TEXT,
       cv_summary TEXT,
+      cv_pdf_base64 TEXT,
+      cv_file_name TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
       ai_score INTEGER,
       score_status TEXT NOT NULL DEFAULT 'missing',
@@ -86,6 +88,16 @@ async function ensureColumns() {
     await db.execute(`ALTER TABLE interviews ADD COLUMN feedback_json TEXT`);
   }
 
+  const hasCvPdf = candidateColumns.rows.some((row) => String((row as Record<string, unknown>).name) === 'cv_pdf_base64');
+  if (!hasCvPdf) {
+    await db.execute(`ALTER TABLE candidates ADD COLUMN cv_pdf_base64 TEXT`);
+  }
+
+  const hasCvFileName = candidateColumns.rows.some((row) => String((row as Record<string, unknown>).name) === 'cv_file_name');
+  if (!hasCvFileName) {
+    await db.execute(`ALTER TABLE candidates ADD COLUMN cv_file_name TEXT`);
+  }
+
   // Backfill legacy rows so previously computed scores remain visible.
   await db.execute(
     `UPDATE candidates
@@ -113,6 +125,7 @@ function mapCandidate(row: Record<string, unknown>): Candidate {
     email: String(row.email),
     cv_text: (row.cv_text as string | null) ?? null,
     cv_summary: (row.cv_summary as string | null) ?? null,
+    cv_file_name: (row.cv_file_name as string | null) ?? null,
     status: String(row.status) as CandidateStatus,
     ai_score: row.ai_score === null ? null : Number(row.ai_score),
     score_status: derivedScoreStatus,
@@ -140,11 +153,11 @@ export async function createCandidate(input: { id: string; name: string; email: 
   });
 }
 
-export async function updateCandidateCV(candidateId: string, cvText: string, cvSummary: string) {
+export async function updateCandidateCV(candidateId: string, cvText: string, cvSummary: string, cvPdfBase64?: string, cvFileName?: string) {
   await ensureSchema();
   await db.execute({
-    sql: 'UPDATE candidates SET cv_text = ?, cv_summary = ? WHERE id = ?',
-    args: [cvText, cvSummary, candidateId]
+    sql: 'UPDATE candidates SET cv_text = ?, cv_summary = ?, cv_pdf_base64 = COALESCE(?, cv_pdf_base64), cv_file_name = COALESCE(?, cv_file_name) WHERE id = ?',
+    args: [cvText, cvSummary, cvPdfBase64 ?? null, cvFileName ?? null, candidateId]
   });
 }
 
@@ -213,6 +226,22 @@ export async function getCandidateById(id: string): Promise<CandidateWithIntervi
   return {
     ...mapCandidate(candidateRow),
     interview: interviewRow ? mapInterview(interviewRow) : null
+  };
+}
+
+export async function getCandidateCVFile(id: string): Promise<{ fileName: string; base64: string } | null> {
+  await ensureSchema();
+  const result = await db.execute({
+    sql: 'SELECT cv_file_name, cv_pdf_base64 FROM candidates WHERE id = ? LIMIT 1',
+    args: [id]
+  });
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const base64 = (row.cv_pdf_base64 as string | null) ?? null;
+  if (!base64) return null;
+  return {
+    fileName: ((row.cv_file_name as string | null) ?? 'candidate-cv.pdf').trim() || 'candidate-cv.pdf',
+    base64
   };
 }
 
