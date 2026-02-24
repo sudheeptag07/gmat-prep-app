@@ -1,4 +1,4 @@
-import type { FeedbackCriterion, InterviewBrief, InterviewFeedback } from '@/lib/types';
+import type { FeedbackCriterion, InterviewFeedback, NextRoundQuestion } from '@/lib/types';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 type CVAnalysis = {
@@ -120,73 +120,97 @@ ${input.transcript.slice(0, 18000)}`;
   };
 }
 
-export async function generateInterviewBrief(input: {
+export async function generateNextRoundQuestions(input: {
   cvText: string;
   cvSummary: string;
   transcript: string;
   aiFeedback: string;
-}): Promise<InterviewBrief> {
-  const contextSeed = input.cvSummary
-    .replace(/\s+/g, ' ')
-    .split('.')
-    .map((part) => part.trim())
-    .find((part) => part.length > 12) || 'their resume claims';
+  roleApplied: string;
+}): Promise<NextRoundQuestion[]> {
+  const prompt = `Generate 3-5 tailored next-round interview questions for a GTM/Sales hiring manager.
 
-  const prompt = `Based on the CV, transcript, and AI evaluation, identify areas where depth is unclear, claims need validation, or performance needs stress-testing. Generate one primary focus area and five highly targeted follow-up questions that probe real experience, ownership, and decision-making.
+Role applied for: ${input.roleApplied}
 
-Return strict JSON with keys:
-- focus (string, one line)
-- concern (string, 1-2 concise lines)
-- questions (array of exactly 5 strings, numbered content not needed)
+You MUST use:
+- Candidate CV text
+- Current round transcript
+- AI analysis summary
+- Missing signals/gaps (examples: no enterprise selling, weak metrics ownership, weak ops exposure, vague outcomes)
 
-Rules:
-- Questions must be specific to this candidate's background.
-- Avoid generic prompts like "tell me about yourself".
+Return strict JSON with key:
+- next_round_questions: array of objects with exactly:
+  - question (1-2 lines)
+  - reason (1 line, why it matters for Skylark + this role)
+  - evidence (short tag referencing specific source, e.g. "CV: ex-Gartner channel", "Transcript: struggled with pricing")
+
+Hard rules:
+- Every question must be anchored to specific evidence from CV or transcript.
+- If no evidence exists for a question, do not generate that question.
+- Avoid generic/templated questions.
+- At least 2 questions must probe the candidate's biggest inferred risk area.
 - Do not repeat questions already asked in round one.
-- Focus on weak signals, vague claims, unproven impact, ownership depth, real outcomes, and edge cases.
 - Keep output concise and practical.
 
 CV Summary:
 ${input.cvSummary.slice(0, 2500)}
 
 CV Text:
-${input.cvText.slice(0, 10000)}
+${input.cvText.slice(0, 12000)}
 
 Interview Transcript (Round 1):
-${input.transcript.slice(0, 20000)}
+${input.transcript.slice(0, 22000)}
 
-AI Evaluation:
-${input.aiFeedback.slice(0, 3000)}`;
+AI Analysis Summary:
+${input.aiFeedback.slice(0, 4000)}`;
 
   const result = await generateWithFallback(prompt);
-  let parsed = parseJsonLoose(result.response.text()) as Partial<InterviewBrief>;
+  let parsed = parseJsonLoose(result.response.text()) as { next_round_questions?: Array<Partial<NextRoundQuestion>> };
 
-  if (typeof parsed !== 'object' || parsed === null || !Array.isArray(parsed.questions)) {
+  if (!Array.isArray(parsed?.next_round_questions)) {
     const retry = await generateWithFallback(`${prompt}\n\nReturn JSON only. No markdown, no prose.`);
-    parsed = parseJsonLoose(retry.response.text()) as Partial<InterviewBrief>;
+    parsed = parseJsonLoose(retry.response.text()) as { next_round_questions?: Array<Partial<NextRoundQuestion>> };
   }
 
-  const questions = Array.isArray(parsed.questions)
-    ? parsed.questions
-        .map((q) => String(q).replace(/^\d+[\).\s-]*/, '').trim())
-        .filter((q) => q.length > 0)
+  const questions = Array.isArray(parsed.next_round_questions)
+    ? parsed.next_round_questions
+        .map((row) => ({
+          question: String(row.question ?? '').trim(),
+          reason: String(row.reason ?? '').trim(),
+          evidence: String(row.evidence ?? '').trim()
+        }))
+        .filter((row) => row.question && row.reason && row.evidence)
         .slice(0, 5)
     : [];
 
-  const normalizedQuestions =
-    questions.length === 5
+  const fallbackQuestions: NextRoundQuestion[] = [
+    {
+      question: 'Pick one major revenue-impact claim from your CV and break down baseline, target, actual, and your direct ownership decisions.',
+      reason: 'Skylark needs operators who can prove commercial impact with clear metric ownership in complex sales cycles.',
+      evidence: 'CV: high-impact outcomes claimed without complete metric breakdown'
+    },
+    {
+      question: 'Walk through a deal where procurement or technical validation slowed progress. What exact intervention did you make and what changed?',
+      reason: 'This role requires unblocking long-cycle enterprise deals with multiple stakeholders.',
+      evidence: 'Transcript: limited detail on enterprise stage-friction handling'
+    },
+    {
+      question: 'Describe a failed initiative and the decision you now believe was wrong. What signal did you ignore and how did you correct your operating model?',
+      reason: 'Skylark prioritizes ownership under ambiguity, including transparent failure analysis and corrective action.',
+      evidence: 'Transcript: success examples strong, failure diagnostics underdeveloped'
+    }
+  ];
+
+  const normalizedQuestions: NextRoundQuestion[] =
+    questions.length >= 3
       ? questions
       : [
-          `You mentioned ${contextSeed}. Which single deal outcome changed because of your direct action, and what was the measurable delta?`,
-          'Pick one major claim from your resume and prove it with exact baseline, target, actual result, and your decision ownership.',
-          'Describe a high-stakes deal that failed. What decision did you make, what signal did you miss, and what changed afterward?',
-          'Explain how you handled stakeholder conflict between sales, product, and leadership in one real cycle. What trade-off did you choose?',
-          'If the same opportunity had half the timeline and fewer resources, what would you cut and what would you protect to still deliver results?'
-        ];
+          ...questions,
+          ...fallbackQuestions
+        ].slice(0, 5);
 
-  return {
-    focus: String(parsed.focus || 'Validate ownership depth and real commercial impact.').trim(),
-    concern: String(parsed.concern || 'Several claims require deeper evidence on direct ownership, decision quality, and measurable outcomes.').trim(),
-    questions: normalizedQuestions
-  };
+  return normalizedQuestions.map((row) => ({
+    question: row.question.slice(0, 320),
+    reason: row.reason.slice(0, 220),
+    evidence: row.evidence.slice(0, 140)
+  }));
 }

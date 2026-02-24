@@ -8,6 +8,12 @@ export type FeedbackCriterion = {
   note: string;
 };
 
+export type NextRoundQuestion = {
+  question: string;
+  reason: string;
+  evidence: string;
+};
+
 export type InterviewFeedback = {
   overall_score: number | null;
   score_status: ScoreStatus;
@@ -22,9 +28,7 @@ export type Candidate = {
   cv_text: string | null;
   cv_summary: string | null;
   cv_file_name: string | null;
-  interview_brief_focus: string | null;
-  interview_brief_concern: string | null;
-  interview_brief_questions: string[];
+  next_round_questions: NextRoundQuestion[];
   status: CandidateStatus;
   ai_score: number | null;
   score_status: ScoreStatus;
@@ -43,10 +47,4 @@ export type Interview = {
 
 export type CandidateWithInterview = Candidate & {
   interview: Interview | null;
-};
-
-export type InterviewBrief = {
-  focus: string;
-  concern: string;
-  questions: string[];
 };

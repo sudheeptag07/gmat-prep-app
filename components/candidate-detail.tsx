@@ -86,7 +86,6 @@ function elevenLabsAnalysisUrl(): string {
 export function CandidateDetail({ id }: Props) {
   const [record, setRecord] = useState<CandidateWithInterview | null>(null);
   const [loading, setLoading] = useState(true);
-  const [briefOpen, setBriefOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -112,11 +111,7 @@ export function CandidateDetail({ id }: Props) {
 
   const feedback = parseFeedback(record);
   const conversationId = extractConversationId(record.interview?.id);
-  const briefQuestions = Array.isArray(record.interview_brief_questions) ? record.interview_brief_questions.slice(0, 5) : [];
-  const hasBrief =
-    Boolean(record.interview_brief_focus?.trim()) &&
-    Boolean(record.interview_brief_concern?.trim()) &&
-    briefQuestions.length === 5;
+  const nextRoundQuestions = Array.isArray(record.next_round_questions) ? record.next_round_questions.slice(0, 5) : [];
   const audioSource = record.interview
     ? record.interview.audio_url || `/api/interviews/${record.interview.id}/audio`
     : null;
@@ -180,51 +175,41 @@ export function CandidateDetail({ id }: Props) {
 
           <section className="glass-panel bg-white/[0.035] p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">Next Interview Brief</h2>
-              <div className="flex items-center gap-2">
-                {hasBrief ? (
-                  <button
-                    type="button"
-                    onClick={() => void navigator.clipboard.writeText(briefQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n'))}
-                    className="inline-flex rounded-full border border-white/20 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-[#F14724]/60 hover:text-[#F14724]"
-                  >
-                    Copy Questions
-                  </button>
-                ) : null}
+              <h2 className="text-lg font-semibold">Next Round - Questions (Tailored to This Candidate)</h2>
+              {nextRoundQuestions.length > 0 ? (
                 <button
                   type="button"
-                  onClick={() => setBriefOpen((prev) => !prev)}
+                  onClick={() =>
+                    void navigator.clipboard.writeText(
+                      nextRoundQuestions
+                        .map((row, i) => `${i + 1}. ${row.question}`)
+                        .join('\n')
+                    )
+                  }
                   className="inline-flex rounded-full border border-white/20 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-[#F14724]/60 hover:text-[#F14724]"
                 >
-                  {briefOpen ? 'Hide' : 'Show'}
+                  Copy Questions
                 </button>
-              </div>
+              ) : null}
             </div>
 
-            {briefOpen ? (
-              hasBrief ? (
-                <div className="mt-4 space-y-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-400">Primary Focus Area</p>
-                    <p className="mt-1 text-sm text-slate-200">{record.interview_brief_focus}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-400">Key Concern or Gap</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-slate-200">{record.interview_brief_concern}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-400">Targeted Follow-up Questions</p>
-                    <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm text-slate-200">
-                      {briefQuestions.map((question, index) => (
-                        <li key={`${index}-${question}`}>{question}</li>
-                      ))}
-                    </ol>
-                  </div>
-                </div>
-              ) : (
-                <p className="mt-4 text-sm text-slate-300">Brief is being prepared from CV, transcript, and AI feedback.</p>
-              )
-            ) : null}
+            {nextRoundQuestions.length > 0 ? (
+              <ol className="mt-4 space-y-3">
+                {nextRoundQuestions.map((row, index) => (
+                  <li key={`${index}-${row.question}`} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3">
+                    <p className="text-sm font-semibold text-slate-100">
+                      {index + 1}. {row.question}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">{row.reason}</p>
+                    <span className="mt-2 inline-flex rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[11px] text-slate-300">
+                      {row.evidence}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="mt-4 text-sm text-slate-300">No tailored next-round questions generated yet.</p>
+            )}
           </section>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { deleteCandidateCascade, getCandidateById, updateCandidateInterviewBrief, updateCandidateStatus, updateInterviewAudioUrl } from '@/lib/db';
+import { deleteCandidateCascade, getCandidateById, updateCandidateNextRoundQuestions, updateCandidateStatus, updateInterviewAudioUrl } from '@/lib/db';
 import { fetchConversationAudioUrl } from '@/lib/elevenlabs';
-import { generateInterviewBrief } from '@/lib/gemini';
+import { generateNextRoundQuestions } from '@/lib/gemini';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -29,21 +29,19 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
       }
     }
 
-    const needsBrief =
-      !record.interview_brief_focus ||
-      !record.interview_brief_concern ||
-      !Array.isArray(record.interview_brief_questions) ||
-      record.interview_brief_questions.length !== 5;
+    const needsNextRoundQuestions =
+      !Array.isArray(record.next_round_questions) || record.next_round_questions.length < 3;
 
-    if (record.status === 'completed' && needsBrief && record.interview?.transcript?.trim()) {
+    if (record.status === 'completed' && needsNextRoundQuestions && record.interview?.transcript?.trim()) {
       try {
-        const brief = await generateInterviewBrief({
+        const questions = await generateNextRoundQuestions({
           cvText: record.cv_text || '',
           cvSummary: record.cv_summary || '',
           transcript: record.interview.transcript || '',
-          aiFeedback: record.interview.agent_summary || ''
+          aiFeedback: record.interview.agent_summary || '',
+          roleApplied: 'GTM Sales Screening'
         });
-        await updateCandidateInterviewBrief(record.id, brief);
+        await updateCandidateNextRoundQuestions(record.id, questions);
         record = await getCandidateById(params.id);
         if (!record) {
           return NextResponse.json({ error: 'Candidate not found.' }, { status: 404 });

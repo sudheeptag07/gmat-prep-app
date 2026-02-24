@@ -1,5 +1,5 @@
 import { createClient } from '@libsql/client';
-import type { Candidate, CandidateWithInterview, CandidateStatus, Interview, InterviewFeedback, ScoreStatus } from '@/lib/types';
+import type { Candidate, CandidateWithInterview, CandidateStatus, Interview, InterviewFeedback, NextRoundQuestion, ScoreStatus } from '@/lib/types';
 
 const url = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL || 'file:local.db';
 const authToken = process.env.TURSO_AUTH_TOKEN;
@@ -20,9 +20,7 @@ export async function ensureSchema() {
       cv_summary TEXT,
       cv_pdf_base64 TEXT,
       cv_file_name TEXT,
-      interview_brief_focus TEXT,
-      interview_brief_concern TEXT,
-      interview_brief_questions TEXT,
+      next_round_questions TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
       ai_score INTEGER,
       score_status TEXT NOT NULL DEFAULT 'missing',
@@ -101,19 +99,9 @@ async function ensureColumns() {
     await db.execute(`ALTER TABLE candidates ADD COLUMN cv_file_name TEXT`);
   }
 
-  const hasBriefFocus = candidateColumns.rows.some((row) => String((row as Record<string, unknown>).name) === 'interview_brief_focus');
-  if (!hasBriefFocus) {
-    await db.execute(`ALTER TABLE candidates ADD COLUMN interview_brief_focus TEXT`);
-  }
-
-  const hasBriefConcern = candidateColumns.rows.some((row) => String((row as Record<string, unknown>).name) === 'interview_brief_concern');
-  if (!hasBriefConcern) {
-    await db.execute(`ALTER TABLE candidates ADD COLUMN interview_brief_concern TEXT`);
-  }
-
-  const hasBriefQuestions = candidateColumns.rows.some((row) => String((row as Record<string, unknown>).name) === 'interview_brief_questions');
-  if (!hasBriefQuestions) {
-    await db.execute(`ALTER TABLE candidates ADD COLUMN interview_brief_questions TEXT`);
+  const hasNextRoundQuestions = candidateColumns.rows.some((row) => String((row as Record<string, unknown>).name) === 'next_round_questions');
+  if (!hasNextRoundQuestions) {
+    await db.execute(`ALTER TABLE candidates ADD COLUMN next_round_questions TEXT`);
   }
 
   // Backfill legacy rows so previously computed scores remain visible.
@@ -137,16 +125,24 @@ function mapCandidate(row: Record<string, unknown>): Candidate {
           ? rawStatus
           : 'missing';
 
-  let briefQuestions: string[] = [];
-  const rawBriefQuestions = (row.interview_brief_questions as string | null) ?? null;
-  if (rawBriefQuestions) {
+  let nextRoundQuestions: NextRoundQuestion[] = [];
+  const rawNextRoundQuestions = (row.next_round_questions as string | null) ?? null;
+  if (rawNextRoundQuestions) {
     try {
-      const parsed = JSON.parse(rawBriefQuestions) as unknown;
+      const parsed = JSON.parse(rawNextRoundQuestions) as unknown;
       if (Array.isArray(parsed)) {
-        briefQuestions = parsed.map((q) => String(q)).filter((q) => q.trim().length > 0).slice(0, 5);
+        nextRoundQuestions = parsed
+          .map((item) => {
+            const question = String((item as { question?: unknown }).question ?? '').trim();
+            const reason = String((item as { reason?: unknown }).reason ?? '').trim();
+            const evidence = String((item as { evidence?: unknown }).evidence ?? '').trim();
+            return { question, reason, evidence };
+          })
+          .filter((item) => item.question && item.reason && item.evidence)
+          .slice(0, 5);
       }
     } catch {
-      briefQuestions = [];
+      nextRoundQuestions = [];
     }
   }
 
@@ -157,9 +153,7 @@ function mapCandidate(row: Record<string, unknown>): Candidate {
     cv_text: (row.cv_text as string | null) ?? null,
     cv_summary: (row.cv_summary as string | null) ?? null,
     cv_file_name: (row.cv_file_name as string | null) ?? null,
-    interview_brief_focus: (row.interview_brief_focus as string | null) ?? null,
-    interview_brief_concern: (row.interview_brief_concern as string | null) ?? null,
-    interview_brief_questions: briefQuestions,
+    next_round_questions: nextRoundQuestions,
     status: String(row.status) as CandidateStatus,
     ai_score: row.ai_score === null ? null : Number(row.ai_score),
     score_status: derivedScoreStatus,
@@ -195,18 +189,16 @@ export async function updateCandidateCV(candidateId: string, cvText: string, cvS
   });
 }
 
-export async function updateCandidateInterviewBrief(
+export async function updateCandidateNextRoundQuestions(
   candidateId: string,
-  input: { focus: string; concern: string; questions: string[] }
+  questions: NextRoundQuestion[]
 ) {
   await ensureSchema();
   await db.execute({
     sql: `UPDATE candidates
-          SET interview_brief_focus = ?,
-              interview_brief_concern = ?,
-              interview_brief_questions = ?
+          SET next_round_questions = ?
           WHERE id = ?`,
-    args: [input.focus, input.concern, JSON.stringify(input.questions.slice(0, 5)), candidateId]
+    args: [JSON.stringify(questions.slice(0, 5)), candidateId]
   });
 }
 
