@@ -243,6 +243,7 @@ export function InterviewRoom({ candidateId }: Props) {
       const cvText = (candidate?.cv_text || '').slice(0, 3000);
       const dynamicVariables = {
         candidate_name: candidate?.name || 'Candidate',
+        candidate_email: candidate?.email || '',
         candidate_id: candidateId,
         cv_text: cvText
       };
