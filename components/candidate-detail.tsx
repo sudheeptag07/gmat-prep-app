@@ -86,6 +86,7 @@ function elevenLabsAnalysisUrl(): string {
 export function CandidateDetail({ id }: Props) {
   const [record, setRecord] = useState<CandidateWithInterview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [questionsOpen, setQuestionsOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -176,41 +177,52 @@ export function CandidateDetail({ id }: Props) {
           <section className="glass-panel bg-white/[0.035] p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Next Round - Tailored Questions (GTM Sales Enablement)</h2>
-              {nextRoundQuestions.length > 0 ? (
+              <div className="flex items-center gap-2">
+                {nextRoundQuestions.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void navigator.clipboard.writeText(
+                        nextRoundQuestions
+                          .map((row, i) => `${i + 1}. ${row.question}`)
+                          .join('\n')
+                      )
+                    }
+                    className="inline-flex rounded-full border border-white/20 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-[#F14724]/60 hover:text-[#F14724]"
+                  >
+                    Copy Questions
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() =>
-                    void navigator.clipboard.writeText(
-                      nextRoundQuestions
-                        .map((row, i) => `${i + 1}. ${row.question}`)
-                        .join('\n')
-                    )
-                  }
+                  onClick={() => setQuestionsOpen((prev) => !prev)}
                   className="inline-flex rounded-full border border-white/20 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-[#F14724]/60 hover:text-[#F14724]"
                 >
-                  Copy Questions
+                  {questionsOpen ? 'Hide' : 'Show'}
                 </button>
-              ) : null}
+              </div>
             </div>
 
-            {nextRoundQuestions.length > 0 ? (
-              <ol className="mt-4 space-y-3">
-                {nextRoundQuestions.map((row, index) => (
-                  <li key={`${index}-${row.question}`} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3">
-                    <p className="overflow-hidden text-sm font-semibold text-slate-100 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-                      {index + 1}. {row.question}
-                    </p>
-                    <p className="mt-1 truncate text-xs text-slate-400">{row.why_skylark}</p>
-                    <p className="mt-1 truncate text-xs text-slate-400">{row.expected_outcome}</p>
-                    <span className="mt-2 inline-flex rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[11px] text-slate-300">
-                      {row.evidence}
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="mt-4 text-sm text-slate-300">Insufficient evidence to generate tailored GTM enablement questions.</p>
-            )}
+            {questionsOpen ? (
+              nextRoundQuestions.length > 0 ? (
+                <ol className="mt-4 space-y-3">
+                  {nextRoundQuestions.map((row, index) => (
+                    <li key={`${index}-${row.question}`} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3">
+                      <p className="text-sm font-semibold text-slate-100">
+                        {index + 1}. {row.question}
+                      </p>
+                      <p className="mt-1 truncate text-xs text-slate-400">{row.why_skylark}</p>
+                      <p className="mt-1 truncate text-xs text-slate-400">{row.expected_outcome}</p>
+                      <span className="mt-2 inline-flex rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[11px] text-slate-300">
+                        {row.evidence}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="mt-4 text-sm text-slate-300">Insufficient evidence to generate tailored GTM enablement questions.</p>
+              )
+            ) : null}
           </section>
         </div>
       </div>
