@@ -1,25 +1,25 @@
-import Link from 'next/link';
-import { DashboardTable } from '@/components/dashboard-table';
 import { DashboardLogout } from '@/components/dashboard-logout';
+import { DashboardTable } from '@/components/dashboard-table';
+
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default function DashboardPage() {
   return (
-    <main className="space-y-6">
-      <section className="glass-panel flex flex-wrap items-center justify-between gap-3 p-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Hiring Manager Dashboard</h1>
-          <p className="muted mt-1 text-sm">Monitor status, scores, transcripts, and interview artifacts.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link href="/dashboard/cvs" className="rounded-xl border border-white/20 px-4 py-2 text-sm transition hover:border-[#F14724]/60 hover:text-[#F14724]">
-            CV Library
-          </Link>
-          <Link href="/" className="rounded-xl border border-white/20 px-4 py-2 text-sm transition hover:border-[#F14724]/60 hover:text-[#F14724]">
-            Candidate Landing
-          </Link>
+    <main className="space-y-6 pb-16">
+      <section className="glass-panel p-6 md:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-[#f3a45b]">Hiring Dashboard</p>
+            <h1 className="spectra-heading mt-3 text-3xl md:text-4xl">Skylark GIS Candidate Pipeline</h1>
+            <p className="muted mt-3 max-w-2xl text-sm leading-6 md:text-base">
+              Review interviews with transcript quality, assignment context, grounded rubric evidence, recommendation, and next-round questions.
+            </p>
+          </div>
           <DashboardLogout />
         </div>
       </section>
+
       <DashboardTable />
     </main>
   );

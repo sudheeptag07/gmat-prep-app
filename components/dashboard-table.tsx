@@ -16,15 +16,20 @@ type ScoreFilter = 'all' | 'high' | 'mid' | 'low';
 type DateFilter = 'all' | 'today' | '7d';
 
 function scoreBucket(score: number) {
-  if (score >= 70) return 'high';
-  if (score >= 40) return 'mid';
+  if (score >= 75) return 'high';
+  if (score >= 50) return 'mid';
   return 'low';
+}
+
+function recommendationLabel(value: Candidate['recommendation']) {
+  return value ? value.replace(/_/g, ' ') : 'pending';
 }
 
 export function DashboardTable() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -51,7 +56,19 @@ export function DashboardTable() {
   }, []);
 
   const filtered = useMemo(() => {
+    const searchTerm = search.trim().toLowerCase();
+
     return candidates.filter((candidate) => {
+      if (
+        searchTerm &&
+        ![candidate.name, candidate.email, candidate.role_applied, candidate.recommendation || '']
+          .join(' ')
+          .toLowerCase()
+          .includes(searchTerm)
+      ) {
+        return false;
+      }
+
       if (statusFilter === 'completed' && candidate.status !== 'completed') return false;
       if (statusFilter === 'pending' && !['pending', 'interviewing'].includes(candidate.status)) return false;
       if (statusFilter === 'error' && candidate.score_status !== 'error') return false;
@@ -61,9 +78,7 @@ export function DashboardTable() {
         if (scoreBucket(candidate.ai_score) !== scoreFilter) return false;
       }
 
-      if (dateFilter === 'today') {
-        if (!isTodayIst(candidate.created_at)) return false;
-      }
+      if (dateFilter === 'today' && !isTodayIst(candidate.created_at)) return false;
       if (dateFilter === '7d') {
         const ms = Date.now() - toDate(candidate.created_at).getTime();
         if (ms > 7 * 24 * 60 * 60 * 1000) return false;
@@ -71,7 +86,7 @@ export function DashboardTable() {
 
       return true;
     });
-  }, [candidates, statusFilter, scoreFilter, dateFilter]);
+  }, [candidates, dateFilter, scoreFilter, search, statusFilter]);
 
   const visibleIdSet = useMemo(() => new Set(filtered.map((c) => c.id)), [filtered]);
   const selectedVisibleCount = useMemo(() => selectedIds.filter((id) => visibleIdSet.has(id)).length, [selectedIds, visibleIdSet]);
@@ -80,10 +95,10 @@ export function DashboardTable() {
   const stats = useMemo(() => {
     const total = candidates.length;
     const completedToday = candidates.filter((c) => c.status === 'completed' && isTodayIst(c.created_at)).length;
-    const errors = candidates.filter((c) => c.score_status === 'error').length;
+    const weakTranscripts = candidates.filter((c) => c.transcript_quality_status === 'missing' || c.transcript_quality_status === 'partial').length;
     const computedScores = candidates.filter((c) => c.score_status === 'computed' && c.ai_score !== null).map((c) => c.ai_score as number);
     const avgScore = computedScores.length ? Math.round(computedScores.reduce((a, b) => a + b, 0) / computedScores.length) : null;
-    return { total, completedToday, errors, avgScore, errorRate: total ? Math.round((errors / total) * 100) : 0 };
+    return { total, completedToday, weakTranscripts, avgScore };
   }, [candidates]);
 
   const chipBase = 'rounded-full border px-3 py-1 text-xs transition';
@@ -93,11 +108,7 @@ export function DashboardTable() {
       setSelectedIds((prev) => prev.filter((id) => !visibleIdSet.has(id)));
       return;
     }
-    setSelectedIds((prev) => {
-      const merged = new Set(prev);
-      for (const candidate of filtered) merged.add(candidate.id);
-      return Array.from(merged);
-    });
+    setSelectedIds((prev) => Array.from(new Set([...prev, ...filtered.map((candidate) => candidate.id)])));
   }
 
   function toggleSelectOne(id: string) {
@@ -113,12 +124,7 @@ export function DashboardTable() {
     setDeleting(true);
     setActionError(null);
     try {
-      const results = await Promise.all(
-        idsToDelete.map(async (id) => {
-          const response = await fetch(`/api/candidates/${id}`, { method: 'DELETE' });
-          return response.ok;
-        })
-      );
+      const results = await Promise.all(idsToDelete.map(async (id) => (await fetch(`/api/candidates/${id}`, { method: 'DELETE' })).ok));
       if (results.some((result) => !result)) {
         setActionError('Some candidates could not be deleted.');
       }
@@ -148,11 +154,11 @@ export function DashboardTable() {
           <p className="mt-1 text-2xl font-semibold">{stats.completedToday}</p>
         </div>
         <div className="glass-panel p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Error Rate</p>
-          <p className="mt-1 text-2xl font-semibold">{stats.errorRate}%</p>
+          <p className="text-xs uppercase tracking-wide text-slate-400">Weak Transcripts</p>
+          <p className="mt-1 text-2xl font-semibold">{stats.weakTranscripts}</p>
         </div>
         <div className="glass-panel p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Avg AI Score</p>
+          <p className="text-xs uppercase tracking-wide text-slate-400">Avg Score</p>
           <p className="mt-1 text-2xl font-semibold">{stats.avgScore ?? '--'}</p>
         </div>
       </div>
@@ -162,6 +168,12 @@ export function DashboardTable() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-semibold">Candidate Pipeline</h2>
             <div className="flex items-center gap-2">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, email, role..."
+                className="rounded-full border border-white/15 bg-white/[0.04] px-4 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+              />
               <span className="text-sm text-slate-300">{filtered.length} shown</span>
               <button
                 onClick={handleDeleteSelected}
@@ -179,9 +191,9 @@ export function DashboardTable() {
             <button onClick={() => setStatusFilter('error')} className={`${chipBase} ${statusFilter === 'error' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>Error</button>
             <button onClick={() => setStatusFilter('all')} className={`${chipBase} ${statusFilter === 'all' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>All</button>
             <span className="mx-1 h-6 w-px bg-white/10" />
-            <button onClick={() => setScoreFilter('high')} className={`${chipBase} ${scoreFilter === 'high' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>High (≥70)</button>
-            <button onClick={() => setScoreFilter('mid')} className={`${chipBase} ${scoreFilter === 'mid' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>Mid (40-69)</button>
-            <button onClick={() => setScoreFilter('low')} className={`${chipBase} ${scoreFilter === 'low' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>Low (&lt;40)</button>
+            <button onClick={() => setScoreFilter('high')} className={`${chipBase} ${scoreFilter === 'high' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>High</button>
+            <button onClick={() => setScoreFilter('mid')} className={`${chipBase} ${scoreFilter === 'mid' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>Mid</button>
+            <button onClick={() => setScoreFilter('low')} className={`${chipBase} ${scoreFilter === 'low' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>Low</button>
             <button onClick={() => setScoreFilter('all')} className={`${chipBase} ${scoreFilter === 'all' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>Any Score</button>
             <span className="mx-1 h-6 w-px bg-white/10" />
             <button onClick={() => setDateFilter('today')} className={`${chipBase} ${dateFilter === 'today' ? 'border-[#F14724]/60 bg-[#F14724]/15 text-[#F14724]' : 'border-white/15 text-slate-300'}`}>Today</button>
@@ -194,7 +206,7 @@ export function DashboardTable() {
           <p className="p-4 text-sm text-slate-300">Loading candidates...</p>
         ) : (
           <div className="overflow-auto">
-            <table className="w-full min-w-[900px]">
+            <table className="w-full min-w-[1320px]">
               <thead className="sticky top-0 z-10 bg-black/65 backdrop-blur-sm">
                 <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-4 py-3">
@@ -202,8 +214,11 @@ export function DashboardTable() {
                   </th>
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Role</th>
+                  <th className="px-4 py-3">Assignment</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">AI Score</th>
+                  <th className="px-4 py-3 text-right">Score</th>
+                  <th className="px-4 py-3">Recommendation</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3 text-right">Detail</th>
                 </tr>
@@ -221,9 +236,13 @@ export function DashboardTable() {
                     </td>
                     <td className="px-4 py-3 text-slate-100">{candidate.name}</td>
                     <td className="px-4 py-3 text-slate-300">
-                      <span title={candidate.email} className="block max-w-[230px] truncate">
-                        {candidate.email}
-                      </span>
+                      <span title={candidate.email} className="block max-w-[220px] truncate">{candidate.email}</span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-300">
+                      <span title={candidate.role_applied} className="block max-w-[220px] truncate">{candidate.role_applied}</span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-300">
+                      {candidate.assignment_summary || candidate.assignment_links.length > 0 ? 'Yes' : 'No'}
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={candidate.status} />
@@ -231,6 +250,7 @@ export function DashboardTable() {
                     <td className="px-4 py-3 text-right">
                       <ScoreBadge score={candidate.ai_score} scoreStatus={candidate.score_status} />
                     </td>
+                    <td className="px-4 py-3 text-slate-300 capitalize">{recommendationLabel(candidate.recommendation)}</td>
                     <td className="px-4 py-3 text-slate-300">{formatDateTimeIst(candidate.created_at)}</td>
                     <td className="px-4 py-3 text-right">
                       <Link href={`/dashboard/candidates/${candidate.id}`} className="inline-flex rounded-full border border-white/20 bg-white/[0.04] px-3 py-1 text-xs font-medium text-slate-200 transition hover:border-[#F14724]/60 hover:text-[#F14724]">

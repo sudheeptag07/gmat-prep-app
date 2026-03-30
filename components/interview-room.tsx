@@ -211,8 +211,10 @@ export function InterviewRoom({ candidateId }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           call_id: conversation.getId() || `local-${candidateId}-${Date.now()}`,
+          user_id: candidateId,
           dynamic_variables: {
-            candidate_id: candidateId
+            candidate_id: candidateId,
+            user_id: candidateId
           },
           transcript: transcriptRef.current
         })
@@ -240,25 +242,31 @@ export function InterviewRoom({ candidateId }: Props) {
       agentEndedRef.current = false;
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      const cvText = (candidate?.cv_text || '').slice(0, 3000);
-      const dynamicVariables = {
-        candidate_name: candidate?.name || 'Candidate',
-        candidate_email: candidate?.email || '',
-        candidate_id: candidateId,
-        cv_text: cvText
-      };
-
-      const signedUrlResponse = await fetch('/api/elevenlabs/signed-url', { cache: 'no-store' });
+      const signedUrlResponse = await fetch(`/api/elevenlabs/signed-url?candidateId=${encodeURIComponent(candidateId)}`, { cache: 'no-store' });
       if (!signedUrlResponse.ok) {
         const payload = (await signedUrlResponse.json()) as { error?: string };
         throw new Error(payload.error || 'Unable to get signed ElevenLabs URL.');
       }
-      const { signedUrl } = (await signedUrlResponse.json()) as { signedUrl: string };
+      const { signedUrl, dynamicVariables: initialDynamicVariables } = (await signedUrlResponse.json()) as {
+        signedUrl: string;
+        dynamicVariables?: Record<string, string>;
+      };
+      const dynamicVariables = {
+        candidate_name: candidate?.name || 'Candidate',
+        candidate_email: candidate?.email || '',
+        candidate_id: candidateId,
+        user_id: candidateId,
+        role_applied: candidate?.role_applied || 'GIS Analyst / GIS Engineer',
+        cv_summary: candidate?.cv_summary || '',
+        assignment_summary: candidate?.assignment_summary || '',
+        ...(initialDynamicVariables || {})
+      };
 
       // Attempt 1: full contextual configuration.
       try {
         await conversation.startSession({
           signedUrl,
+          userId: candidateId,
           connectionType: 'websocket',
           dynamicVariables
         });
@@ -267,6 +275,7 @@ export function InterviewRoom({ candidateId }: Props) {
         try {
           await conversation.startSession({
             signedUrl,
+            userId: candidateId,
             connectionType: 'websocket',
             dynamicVariables
           });
@@ -278,6 +287,7 @@ export function InterviewRoom({ candidateId }: Props) {
           }
           await conversation.startSession({
             agentId,
+            userId: candidateId,
             connectionType: 'websocket',
             dynamicVariables
           });
@@ -338,7 +348,7 @@ export function InterviewRoom({ candidateId }: Props) {
   return (
     <section className="mx-auto mt-8 max-w-4xl text-center">
       <h1 className="spectra-heading text-3xl text-white md:text-5xl">Spectra Voice Assistant</h1>
-      <p className="muted mt-3 text-base md:text-xl">GTM Sales Screening for Skylark Drones</p>
+        <p className="muted mt-3 text-base md:text-xl">GIS Interview for Skylark Drones</p>
 
       <div className="mx-auto mt-8 flex h-48 w-48 items-center justify-center rounded-full border border-sky-500/30 bg-sky-900/30 md:h-56 md:w-56">
         <div className="flex h-32 w-32 items-center justify-center rounded-full bg-sky-800/40 text-sky-300 md:h-40 md:w-40">

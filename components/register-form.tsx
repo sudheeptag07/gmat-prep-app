@@ -6,11 +6,17 @@ import { ArrowRight, Loader2, Upload } from 'lucide-react';
 
 type SubmissionState = 'idle' | 'registering' | 'uploading' | 'ready' | 'error';
 
+const DEFAULT_ROLE = 'GIS Analyst / GIS Engineer';
+
 export function RegisterForm() {
   const router = useRouter();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [roleApplied, setRoleApplied] = useState(DEFAULT_ROLE);
+  const [assignmentLink, setAssignmentLink] = useState('');
+  const [assignmentNote, setAssignmentNote] = useState('');
   const [cv, setCv] = useState<File | null>(null);
+  const [assignment, setAssignment] = useState<File | null>(null);
   const [state, setState] = useState<SubmissionState>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -28,25 +34,44 @@ export function RegisterForm() {
       const register = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email })
+        body: JSON.stringify({ name, email, role_applied: roleApplied })
       });
 
       if (!register.ok) throw new Error('Registration failed.');
       const { candidateId } = (await register.json()) as { candidateId: string };
 
       setState('uploading');
-      const form = new FormData();
-      form.set('candidateId', candidateId);
-      form.set('cv', cv);
 
-      const upload = await fetch('/api/upload-cv', {
+      const cvForm = new FormData();
+      cvForm.set('candidateId', candidateId);
+      cvForm.set('cv', cv);
+
+      const uploadCv = await fetch('/api/upload-cv', {
         method: 'POST',
-        body: form
+        body: cvForm
       });
 
-      if (!upload.ok) {
-        const payload = (await upload.json()) as { error?: string };
+      if (!uploadCv.ok) {
+        const payload = (await uploadCv.json()) as { error?: string };
         throw new Error(payload.error || 'CV processing failed.');
+      }
+
+      if (assignment || assignmentLink.trim()) {
+        const assignmentForm = new FormData();
+        assignmentForm.set('candidateId', candidateId);
+        if (assignment) assignmentForm.set('assignment', assignment);
+        if (assignmentLink.trim()) assignmentForm.set('assignmentLink', assignmentLink.trim());
+        if (assignmentNote.trim()) assignmentForm.set('note', assignmentNote.trim());
+
+        const uploadAssignment = await fetch('/api/upload-assignment', {
+          method: 'POST',
+          body: assignmentForm
+        });
+
+        if (!uploadAssignment.ok) {
+          const payload = (await uploadAssignment.json()) as { error?: string };
+          throw new Error(payload.error || 'Assignment processing failed.');
+        }
       }
 
       setState('ready');
@@ -58,29 +83,42 @@ export function RegisterForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="glass-panel w-full max-w-xl space-y-5 p-7 md:p-8">
-      <h2 className="spectra-heading text-3xl text-white md:text-4xl">Join the Pipeline</h2>
+    <form onSubmit={onSubmit} className="glass-panel w-full max-w-2xl space-y-5 p-7 md:p-8">
+      <h2 className="spectra-heading text-3xl text-white md:text-4xl">GIS Interview Intake</h2>
 
-      <div className="space-y-2">
-        <label className="text-sm text-slate-300">Full Name</label>
-        <input
-          type="text"
-          required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. John Doe"
-          className="spectra-input w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-base placeholder:text-slate-500"
-        />
+      <div className="grid gap-5 md:grid-cols-2">
+        <div className="space-y-2">
+          <label className="text-sm text-slate-300">Full Name</label>
+          <input
+            type="text"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. John Doe"
+            className="spectra-input w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-base placeholder:text-slate-500"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm text-slate-300">Email Address</label>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="e.g. john@example.com"
+            className="spectra-input w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-base placeholder:text-slate-500"
+          />
+        </div>
       </div>
 
       <div className="space-y-2">
-        <label className="text-sm text-slate-300">Email Address</label>
+        <label className="text-sm text-slate-300">Role Applied</label>
         <input
-          type="email"
+          type="text"
           required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="e.g. john@example.com"
+          value={roleApplied}
+          onChange={(e) => setRoleApplied(e.target.value)}
           className="spectra-input w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-base placeholder:text-slate-500"
         />
       </div>
@@ -96,10 +134,43 @@ export function RegisterForm() {
             className="hidden"
           />
           <Upload className="h-10 w-10 text-slate-500" />
-          <p className="mt-5 text-lg text-slate-300 md:text-xl">
-            {cv ? cv.name : 'Drag and drop or click to upload PDF'}
-          </p>
+          <p className="mt-5 text-lg text-slate-300 md:text-xl">{cv ? cv.name : 'Upload CV PDF'}</p>
         </label>
+      </div>
+
+      <div className="grid gap-5 md:grid-cols-2">
+        <div className="space-y-3">
+          <label className="text-sm text-slate-300">Assignment PDF (Optional)</label>
+          <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.02] px-6 py-7 text-center transition hover:border-[#F14724]/50 hover:bg-white/[0.04]">
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setAssignment(e.target.files?.[0] || null)}
+              className="hidden"
+            />
+            <Upload className="h-8 w-8 text-slate-500" />
+            <p className="mt-4 text-base text-slate-300">{assignment ? assignment.name : 'Upload assignment PDF'}</p>
+          </label>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm text-slate-300">Assignment Link (Optional)</label>
+          <input
+            type="url"
+            value={assignmentLink}
+            onChange={(e) => setAssignmentLink(e.target.value)}
+            placeholder="https://..."
+            className="spectra-input w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-base placeholder:text-slate-500"
+          />
+          <label className="text-sm text-slate-300">Assignment Note (Optional)</label>
+          <textarea
+            value={assignmentNote}
+            onChange={(e) => setAssignmentNote(e.target.value)}
+            rows={5}
+            placeholder="Anything the interviewer should know about the assignment."
+            className="spectra-input w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-base placeholder:text-slate-500"
+          />
+        </div>
       </div>
 
       {error ? <p className="text-sm text-rose-300">{error}</p> : null}
@@ -112,7 +183,7 @@ export function RegisterForm() {
         {state === 'registering' || state === 'uploading' ? (
           <>
             <Loader2 className="h-5 w-5 animate-spin" />
-            {state === 'registering' ? 'Creating profile...' : 'Analyzing CV...'}
+            {state === 'registering' ? 'Creating profile...' : 'Processing documents...'}
           </>
         ) : (
           <>

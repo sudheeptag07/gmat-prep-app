@@ -7,12 +7,12 @@ export function DashboardLogout() {
 
   async function onLogout() {
     await fetch('/api/dashboard-auth', { method: 'DELETE' });
-    router.push('/dashboard-login');
+    router.push('/admin-login');
     router.refresh();
   }
 
   return (
-    <button onClick={onLogout} className="rounded-xl border border-white/20 px-4 py-2 text-sm">
+    <button onClick={onLogout} className="rounded-full border border-white/10 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-[#f07e25]/60 hover:text-white">
       Logout
     </button>
   );

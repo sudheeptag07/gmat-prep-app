@@ -4,3 +4,4 @@ node_modules
 local.db
 *.log
 tsconfig.tsbuildinfo
+.vercel

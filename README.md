@@ -1,40 +1,32 @@
-# Spectra Voice (AI Recruiter)
+# Seeing GMAT
 
-Next.js 14 + TypeScript implementation of the Spectra Voice PRD for automated GTM/Sales screening.
+Next.js 14 + TypeScript workspace for a GMAT prep product built around strategy selection, pattern recognition, and speed-aware feedback.
 
-## Features Implemented
+## Product direction
 
-- Candidate flow
-- Landing + registration + CV upload
-- PDF CV extraction + Gemini summary generation
-- Interview room with ElevenLabs websocket bootstrap + dynamic variables
-- Hiring manager dashboard
-- Candidate table with status and score
-- Candidate detail with CV summary, audio playback, transcript, and AI feedback
-- Backend APIs per PRD + diagnostic endpoint
-- SQLite/LibSQL persistence (Turso compatible)
+The product is not meant to be a question bank or mock-test shell. The core loop is:
 
-## Tech
+1. User attempts a question with a timer.
+2. The app shows correctness, timing, and confidence alignment.
+3. The explanation teaches the baseline method plus faster alternatives.
+4. The user learns which method to choose next time, not just what the answer was.
 
-- Next.js 14 (App Router)
+The working product brief lives at `docs/gmat-strategy-engine-prd.md`.
+
+## Current state
+
+This repository still contains legacy routes and components from earlier projects. The public homepage now reflects the GMAT strategy-engine direction, while older dashboard and admin flows remain in the codebase until they are replaced or removed.
+
+## Stack
+
+- Next.js 14 App Router
 - TypeScript
-- Tailwind CSS (dark, glassmorphism styling)
-- LibSQL client (`@libsql/client`) for SQLite/Turso
-- Google Gemini (`gemini-1.5-flash`)
-- ElevenLabs conversational websocket integration
+- Tailwind CSS
+- LibSQL client (`@libsql/client`)
 
 ## Environment
 
-Copy `.env.example` to `.env` and set values:
-
-- `DATABASE_URL` (`file:local.db` for local)
-- `TURSO_DATABASE_URL` (preferred for Turso remote DBs)
-- `TURSO_AUTH_TOKEN` (only for remote Turso)
-- `GEMINI_API_KEY` (preferred) or `GOOGLE_API_KEY`
-- `GEMINI_MODEL` (optional, default `gemini-2.5-flash`)
-- `ELEVENLABS_AGENT_ID` (server diagnostic)
-- `NEXT_PUBLIC_ELEVENLABS_AGENT_ID` (client websocket)
-- `DASHBOARD_PASSWORD` (optional; protects `/dashboard` routes when set)
+Copy `.env.example` to `.env` and set the database and auth variables you need for the routes you plan to run.
 
 ## Run
 
@@ -43,23 +35,9 @@ npm install
 npm run dev
 ```
 
-Optional schema init:
+## Verify
 
 ```bash
-npm run db:init
+npx tsc --noEmit
+npm run build
 ```
-
-## API Endpoints
-
-- `POST /api/register`
-- `POST /api/upload-cv`
-- `GET /api/candidates`
-- `GET /api/candidates/[id]`
-- `PATCH /api/candidates/[id]` (status updates)
-- `POST /api/elevenlabs-webhook`
-- `GET /api/diagnostic`
-
-## Notes
-
-- Webhook payload handling expects `dynamic_variables.candidate_id` (or `candidateId`) and transcript entries.
-- Interview scoring is generated from CV summary + transcript and persisted as candidate `ai_score`.

@@ -1,11 +1,18 @@
 import { NextResponse } from 'next/server';
-import { getCandidateById, getInterviewById, updateCandidateNextRoundQuestions, updateCandidateScore, updateCandidateScoreStatus, updateCandidateStatus, upsertInterview } from '@/lib/db';
+import {
+  createWebhookEvent,
+  getCandidateByEmail,
+  getCandidateById,
+  getInterviewById,
+  updateCandidateEvaluation,
+  updateCandidateNextRoundQuestions,
+  updateCandidateScoreStatus,
+  updateCandidateTranscriptQuality,
+  updateWebhookEventStatus,
+  upsertInterview
+} from '@/lib/db';
 import { generateNextRoundQuestions, scoreInterview } from '@/lib/gemini';
-import type { InterviewFeedback } from '@/lib/types';
-
-function transcriptToText(transcript: Array<{ role: string; text: string }> = []) {
-  return transcript.map((row) => `${row.role}: ${row.text}`).join('\n');
-}
+import type { InterviewFeedback, TranscriptQualityStatus } from '@/lib/types';
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -23,36 +30,47 @@ function pickFirstString(...values: unknown[]): string | null {
   return null;
 }
 
-function pickCandidateId(body: Record<string, unknown>): string | null {
-  const dynamicVariables = asRecord(body.dynamic_variables);
-  const convoInitiation = asRecord(body.conversation_initiation_client_data);
-  const convoDynamicVariables = asRecord(convoInitiation.dynamic_variables);
-  const data = asRecord(body.data);
-  const dataConvoInitiation = asRecord(data.conversation_initiation_client_data);
-  const dataConvoDynamicVariables = asRecord(dataConvoInitiation.dynamic_variables);
-  const metadata = asRecord(body.metadata);
-  const metadataDynamicVariables = asRecord(metadata.dynamic_variables);
-  const dataMetadata = asRecord(data.metadata);
-  const dataMetadataDynamicVariables = asRecord(dataMetadata.dynamic_variables);
+function transcriptToText(transcript: Array<{ role: string; text: string }> = []) {
+  return transcript.map((row) => `${row.role}: ${row.text}`).join('\n');
+}
 
+function pickDynamicVariables(body: Record<string, unknown>) {
+  const data = asRecord(body.data);
+  const conversation = asRecord(body.conversation);
+  const metadata = asRecord(body.metadata);
+  const convoInit = asRecord(body.conversation_initiation_client_data);
+  const dataConvoInit = asRecord(data.conversation_initiation_client_data);
+
+  return [
+    asRecord(body.dynamic_variables),
+    asRecord(data.dynamic_variables),
+    asRecord(conversation.dynamic_variables),
+    asRecord(metadata.dynamic_variables),
+    asRecord(convoInit.dynamic_variables),
+    asRecord(dataConvoInit.dynamic_variables)
+  ];
+}
+
+function pickCandidateId(body: Record<string, unknown>) {
+  const dynamicSets = pickDynamicVariables(body);
   return pickFirstString(
-    dynamicVariables.candidate_id,
-    dynamicVariables.candidateId,
-    convoDynamicVariables.candidate_id,
-    convoDynamicVariables.candidateId,
-    dataConvoDynamicVariables.candidate_id,
-    dataConvoDynamicVariables.candidateId,
-    metadataDynamicVariables.candidate_id,
-    metadataDynamicVariables.candidateId,
-    dataMetadataDynamicVariables.candidate_id,
-    dataMetadataDynamicVariables.candidateId,
-    data.user_id,
+    ...dynamicSets.flatMap((row) => [row.candidate_id, row.candidateId]),
+    asRecord(body.data).user_id,
     body.candidate_id,
     body.candidateId
   );
 }
 
-function pickCallId(body: Record<string, unknown>, candidateId: string) {
+function pickCandidateEmail(body: Record<string, unknown>) {
+  const dynamicSets = pickDynamicVariables(body);
+  return pickFirstString(
+    ...dynamicSets.flatMap((row) => [row.candidate_email, row.email]),
+    body.email,
+    asRecord(body.data).email
+  );
+}
+
+function pickCallId(body: Record<string, unknown>, candidateId: string | null) {
   const data = asRecord(body.data);
   return (
     pickFirstString(
@@ -64,9 +82,12 @@ function pickCallId(body: Record<string, unknown>, candidateId: string) {
       data.call_id,
       data.conversation_id,
       data.id
-    ) ||
-    `fallback-${candidateId}-${Date.now()}`
+    ) || `fallback-${candidateId ?? 'unknown'}-${Date.now()}`
   );
+}
+
+function pickEventType(body: Record<string, unknown>) {
+  return pickFirstString(body.type, body.event_type, asRecord(body.data).type) || 'unknown';
 }
 
 function extractTranscriptEntries(raw: unknown): Array<{ role: string; text: string }> {
@@ -76,12 +97,9 @@ function extractTranscriptEntries(raw: unknown): Array<{ role: string; text: str
   }
 
   if (!Array.isArray(raw)) {
-    const obj = asRecord(raw);
-    const nested = obj.turns ?? obj.messages ?? obj.transcript;
-    if (nested) {
-      return extractTranscriptEntries(nested);
-    }
-    return [];
+    const row = asRecord(raw);
+    const nested = row.turns ?? row.messages ?? row.transcript;
+    return nested ? extractTranscriptEntries(nested) : [];
   }
 
   const entries: Array<{ role: string; text: string }> = [];
@@ -105,212 +123,172 @@ function pickTranscript(body: Record<string, unknown>): string {
   const candidates = [
     body.transcript,
     data.transcript,
-    asRecord(data.analysis).transcript,
     asRecord(body.conversation).transcript,
+    asRecord(data.conversation).transcript,
     asRecord(body.analysis).transcript,
-    asRecord(body.event).transcript
+    asRecord(data.analysis).transcript
   ];
 
-  for (const raw of candidates) {
-    const entries = extractTranscriptEntries(raw);
+  for (const candidate of candidates) {
+    const entries = extractTranscriptEntries(candidate);
     if (entries.length > 0) return transcriptToText(entries);
   }
 
-  const rawText = pickFirstString(
-    body.transcript_text,
-    asRecord(body.analysis).transcript_text,
-    data.transcript_text,
-    asRecord(data.analysis).transcript_text
+  return (
+    pickFirstString(
+      body.transcript_text,
+      data.transcript_text,
+      asRecord(body.analysis).transcript_text,
+      asRecord(data.analysis).transcript_text
+    ) || ''
   );
-  return rawText || '';
 }
 
-function pickAudioUrl(body: Record<string, unknown>): string | null {
+function pickAudioUrl(body: Record<string, unknown>) {
   const data = asRecord(body.data);
+  const conversation = asRecord(body.conversation);
   return pickFirstString(
     body.audio_url,
     data.audio_url,
-    asRecord(body.conversation).audio_url,
-    asRecord(body.analysis).audio_url,
+    body.recording_url,
     data.recording_url,
-    body.recording_url
+    conversation.audio_url,
+    conversation.recording_url
   );
 }
 
-async function fetchAudioUrlFromElevenLabs(callId: string): Promise<string | null> {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey || !callId) return null;
+function pickDuration(body: Record<string, unknown>): number | null {
+  const data = asRecord(body.data);
+  const raw = body.duration ?? body.duration_seconds ?? data.duration ?? data.duration_seconds;
+  const duration = Number(raw);
+  return Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null;
+}
 
-  const endpoints = [
-    `https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(callId)}`,
-    `https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(callId)}/details`
-  ];
+function assessTranscriptQuality(transcript: string): { score: number; status: TranscriptQualityStatus } {
+  const lines = transcript
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const chars = transcript.replace(/\s+/g, ' ').trim().length;
+  const userTurns = lines.filter((line) => /^user:/i.test(line)).length;
+  const agentTurns = lines.filter((line) => /^agent:/i.test(line)).length;
+  const score = Math.max(0, Math.min(100, Math.round(chars / 45) + userTurns * 6 + agentTurns * 4));
 
-  for (const url of endpoints) {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { 'xi-api-key': apiKey },
-        cache: 'no-store'
-      });
-      if (!response.ok) continue;
-      const payload = asRecord(await response.json());
-      const conversation = asRecord(payload.conversation);
-      const analysis = asRecord(payload.analysis);
-      const recording = asRecord(payload.recording);
-      const audioUrl = pickFirstString(
-        payload.audio_url,
-        payload.recording_url,
-        payload.audioUrl,
-        conversation.audio_url,
-        conversation.recording_url,
-        analysis.audio_url,
-        analysis.recording_url,
-        recording.url,
-        recording.audio_url
-      );
-      if (audioUrl) return audioUrl;
-    } catch {
-      // Best effort fallback only.
-    }
-  }
+  if (chars < 80 || userTurns < 1) return { score, status: 'missing' };
+  if (chars < 220 || userTurns < 2 || agentTurns < 2) return { score, status: 'partial' };
+  if (chars < 450 || userTurns < 4) return { score, status: 'usable' };
+  return { score, status: 'final' };
+}
 
-  return null;
+function buildEvaluationSummary(feedback: InterviewFeedback) {
+  return [
+    feedback.overall_feedback || '',
+    `Recommendation: ${feedback.recommendation}`,
+    ...feedback.strengths.map((item) => `Strength: ${item}`),
+    ...feedback.concerns.map((item) => `Concern: ${item}`),
+    ...feedback.rubric.map((item) => `${item.criteria}: ${item.score}/100 | ${item.note} | ${item.evidence.join('; ')}`)
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 export async function POST(request: Request) {
-  try {
-    const body = asRecord(await request.json());
-    const candidateId = pickCandidateId(body);
-    if (!candidateId) {
-      console.error('ElevenLabs webhook missing candidate id', { keys: Object.keys(body), event: body.type });
-      return NextResponse.json({ error: 'candidateId missing in dynamic variables.' }, { status: 400 });
-    }
+  const body = asRecord(await request.json());
+  const eventType = pickEventType(body);
+  const candidateIdHint = pickCandidateId(body);
+  const candidateEmail = pickCandidateEmail(body);
+  const conversationId = pickCallId(body, candidateIdHint);
+  const eventId =
+    pickFirstString(body.event_id, body.id, `${conversationId}:${eventType}:${candidateIdHint ?? candidateEmail ?? 'unknown'}`) ||
+    `${conversationId}:${Date.now()}`;
 
-    const candidate = await getCandidateById(candidateId);
+  await createWebhookEvent({
+    id: eventId,
+    candidateId: candidateIdHint,
+    conversationId,
+    payloadJson: JSON.stringify(body),
+    eventType,
+    processingStatus: 'received'
+  });
+
+  try {
+    const candidate =
+      (candidateIdHint ? await getCandidateById(candidateIdHint) : null) ||
+      (candidateEmail ? await getCandidateByEmail(candidateEmail) : null);
+
     if (!candidate) {
+      await updateWebhookEventStatus(eventId, 'candidate_not_found');
       return NextResponse.json({ error: 'Candidate not found.' }, { status: 404 });
     }
 
-    const callId = pickCallId(body, candidateId);
-    const incomingTranscript = pickTranscript(body);
-    const existingInterview = await getInterviewById(callId);
-    const existingTranscript = existingInterview?.transcript || '';
-    const transcript =
-      incomingTranscript.trim().length >= existingTranscript.trim().length
-        ? incomingTranscript
-        : existingTranscript;
-    const audioUrl = pickAudioUrl(body) || (await fetchAudioUrlFromElevenLabs(callId));
+    const existingInterview = await getInterviewById(conversationId);
+    const incomingTranscript = pickTranscript(body).trim();
+    const currentTranscript = existingInterview?.transcript?.trim() || '';
+    const transcript = incomingTranscript.length >= currentTranscript.length ? incomingTranscript : currentTranscript;
+    const transcriptQuality = assessTranscriptQuality(transcript);
+    const audioUrl = pickAudioUrl(body) || existingInterview?.audio_url || null;
+    const duration = pickDuration(body) ?? existingInterview?.duration ?? null;
 
-    let score: number | null = null;
-    let scoreStatus: 'computed' | 'missing' | 'error' = 'missing';
-    let feedback: InterviewFeedback = {
-      overall_score: null,
-      score_status: 'missing',
-      criteria: [],
-      overall_feedback: 'AI feedback pending.'
-    };
-    let agentSummary = 'AI feedback pending.';
+    let feedback: InterviewFeedback | null = null;
+    let summary = 'Interview captured. Evaluation pending.';
 
-    if (transcript.trim().length > 0) {
-      try {
-        const scored = await scoreInterview({
-          cvSummary: candidate.cv_summary || '',
-          transcript
-        });
-        feedback = scored;
-        score = typeof scored.overall_score === 'number' ? scored.overall_score : null;
-        scoreStatus = score === null ? 'missing' : 'computed';
-        feedback.score_status = scoreStatus;
-        agentSummary = [
-          `Overall Score: ${score ?? '--'}/100`,
-          `Status: ${scoreStatus}`,
-          `Overall: ${feedback.overall_feedback || 'No overall feedback available.'}`
-        ].join('\n\n');
-      } catch {
-        console.error('Gemini scoring failed for webhook', { callId, candidateId });
-        scoreStatus = 'error';
-        feedback = {
-          overall_score: null,
-          score_status: 'error',
-          criteria: [],
-          overall_feedback: 'Interview captured, but Gemini scoring failed for this attempt.'
-        };
-        agentSummary = feedback.overall_feedback || 'Interview captured, but Gemini scoring failed for this attempt.';
-      }
-    } else if (!existingInterview?.feedback_json) {
-      scoreStatus = 'missing';
-      feedback = {
-        overall_score: null,
-        score_status: 'missing',
-        criteria: [],
-        overall_feedback: 'Interview captured, but transcript was empty in webhook payload.'
-      };
-      agentSummary = feedback.overall_feedback || 'Interview captured, but transcript was empty in webhook payload.';
+    if (transcriptQuality.status === 'usable' || transcriptQuality.status === 'final') {
+      feedback = await scoreInterview({
+        roleApplied: candidate.role_applied,
+        cvSummary: candidate.cv_summary || '',
+        assignmentSummary: candidate.assignment_summary || '',
+        transcript
+      });
+      summary = feedback.overall_feedback || 'Evaluation completed.';
+      await updateCandidateEvaluation(candidate.id, feedback);
     } else {
-      // Preserve already-scored interview state when webhook delivers a partial/empty follow-up event.
-      scoreStatus = candidate.score_status;
-      if (existingInterview.feedback_json) {
-        try {
-          feedback = JSON.parse(existingInterview.feedback_json) as InterviewFeedback;
-        } catch {
-          // Ignore malformed legacy JSON and keep fallback feedback payload.
-        }
-      }
-      agentSummary = existingInterview.agent_summary || agentSummary;
+      summary =
+        transcriptQuality.status === 'partial'
+          ? 'Partial transcript captured. Evaluation skipped until a stronger transcript arrives.'
+          : 'Transcript missing or too weak to evaluate.';
+      await updateCandidateScoreStatus(candidate.id, 'missing', transcriptQuality.status);
     }
 
+    await updateCandidateTranscriptQuality(candidate.id, transcriptQuality.status);
     await upsertInterview({
-      id: callId,
-      candidateId,
+      id: conversationId,
+      candidateId: candidate.id,
       transcript,
-      agentSummary,
+      duration,
+      transcriptQualityScore: transcriptQuality.score,
+      transcriptQualityStatus: transcriptQuality.status,
+      agentSummary: summary,
       feedbackJson: feedback,
       audioUrl
     });
 
-    if (score !== null && scoreStatus === 'computed') {
-      await updateCandidateScore(candidateId, score);
-    } else {
-      if (scoreStatus === 'error') {
-        if (candidate.score_status !== 'computed') {
-          await updateCandidateScoreStatus(candidateId, 'error');
-        }
-      } else if (scoreStatus === 'missing') {
-        if (candidate.score_status !== 'computed') {
-          await updateCandidateScoreStatus(candidateId, 'missing');
-        }
-      } else {
-        await updateCandidateStatus(candidateId, 'completed');
-      }
-    }
-
-    const hasTailoredQuestions = Array.isArray(candidate.next_round_questions) && candidate.next_round_questions.length >= 5;
-    if (!hasTailoredQuestions && transcript.trim().length > 0 && scoreStatus === 'computed') {
-      try {
-        const tailoredQuestions = await generateNextRoundQuestions({
+    if (feedback) {
+      const shouldGenerateQuestions = candidate.next_round_questions.length < 5;
+      if (shouldGenerateQuestions) {
+        const questions = await generateNextRoundQuestions({
+          roleApplied: candidate.role_applied,
           cvText: candidate.cv_text || '',
           cvSummary: candidate.cv_summary || '',
+          assignmentSummary: candidate.assignment_summary || '',
           transcript,
-          aiFeedback: [
-            feedback.overall_feedback || '',
-            ...feedback.criteria.map((row) => `${row.name}: ${row.rating} - ${row.note}`)
-          ]
-            .filter(Boolean)
-            .join('\n'),
-          roleApplied: 'GTM Sales Enablement'
+          evaluationSummary: buildEvaluationSummary(feedback)
         });
-
-        if (tailoredQuestions.length >= 5) {
-          await updateCandidateNextRoundQuestions(candidateId, tailoredQuestions);
+        if (questions.length > 0) {
+          await updateCandidateNextRoundQuestions(candidate.id, questions);
         }
-      } catch {
-        // Do not fail webhook completion if next-round question generation fails.
       }
     }
 
-    return NextResponse.json({ ok: true, score, scoreStatus, callId });
+    await updateWebhookEventStatus(eventId, 'processed');
+    return NextResponse.json({
+      ok: true,
+      candidate_id: candidate.id,
+      conversation_id: conversationId,
+      transcript_quality_status: transcriptQuality.status,
+      score_status: feedback ? 'computed' : 'missing'
+    });
   } catch (error) {
+    await updateWebhookEventStatus(eventId, 'error');
     return NextResponse.json({ error: (error as Error).message }, { status: 500 });
   }
 }

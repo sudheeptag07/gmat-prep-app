@@ -5,7 +5,9 @@ import { createCandidate } from '@/lib/db';
 
 const schema = z.object({
   name: z.string().min(2),
-  email: z.string().email()
+  email: z.string().email(),
+  role_applied: z.string().min(2).max(120).default('GIS Analyst / GIS Engineer'),
+  metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
 });
 
 export async function POST(request: Request) {
@@ -18,7 +20,13 @@ export async function POST(request: Request) {
     }
 
     const candidateId = uuid();
-    await createCandidate({ id: candidateId, ...parsed.data });
+    await createCandidate({
+      id: candidateId,
+      name: parsed.data.name,
+      email: parsed.data.email,
+      roleApplied: parsed.data.role_applied,
+      metadataJson: parsed.data.metadata ? JSON.stringify(parsed.data.metadata) : null
+    });
 
     return NextResponse.json({ candidateId }, { status: 201 });
   } catch (error) {

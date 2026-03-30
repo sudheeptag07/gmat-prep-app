@@ -29,21 +29,30 @@ export async function POST(request: Request) {
     }
 
     const bytes = Buffer.from(await file.arrayBuffer());
-    const cvText = await extractPdfText(bytes);
+    let cvText = '';
+    try {
+      cvText = await extractPdfText(bytes);
+    } catch {
+      cvText = '';
+    }
     let summary = 'CV uploaded successfully. AI summary is pending.';
     let keySkills: string[] = [];
     let aiStatus: 'computed' | 'pending' = 'pending';
 
-    try {
-      const cvAnalysis = await analyzeCV(cvText);
-      summary = cvAnalysis.summary;
-      keySkills = cvAnalysis.keySkills;
-      aiStatus = 'computed';
-    } catch (analysisError) {
-      const message = (analysisError as Error).message || '';
-      if (!message.includes('429')) {
-        throw analysisError;
+    if (cvText.trim()) {
+      try {
+        const cvAnalysis = await analyzeCV(cvText);
+        summary = cvAnalysis.summary;
+        keySkills = cvAnalysis.keySkills;
+        aiStatus = 'computed';
+      } catch (analysisError) {
+        const message = (analysisError as Error).message || '';
+        if (!message.includes('429')) {
+          throw analysisError;
+        }
       }
+    } else {
+      summary = 'CV uploaded, but text extraction failed. Review the original file manually.';
     }
 
     await updateCandidateCV(parsed.data.candidateId, cvText, summary, bytes.toString('base64'), file.name || 'candidate-cv.pdf');

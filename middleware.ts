@@ -13,15 +13,15 @@ export function middleware(request: NextRequest) {
   const cookieValue = request.cookies.get(DASHBOARD_AUTH_COOKIE)?.value;
   const isAuthed = cookieValue === password;
 
-  if (pathname.startsWith('/dashboard-login')) {
+  if (pathname.startsWith('/dashboard-login') || pathname.startsWith('/admin-login')) {
     if (isAuthed) {
       return NextResponse.redirect(new URL('/dashboard', request.url));
     }
     return NextResponse.next();
   }
 
-  if (pathname.startsWith('/dashboard') && !isAuthed) {
-    const loginUrl = new URL('/dashboard-login', request.url);
+  if ((pathname.startsWith('/dashboard') || pathname.startsWith('/admin')) && !isAuthed) {
+    const loginUrl = new URL('/admin-login', request.url);
     loginUrl.searchParams.set('next', `${pathname}${search}`);
     return NextResponse.redirect(loginUrl);
   }
@@ -30,5 +30,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/dashboard-login']
+  matcher: ['/dashboard/:path*', '/dashboard-login', '/admin/:path*', '/admin-login']
 };

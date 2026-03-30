@@ -1,5 +1,5 @@
 {
-  "name": "spectra-voice",
+  "name": "gmat-strategy-engine",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:encouragement": "tsx --test lib/select-encouragement.test.ts",
     "db:init": "tsx scripts/init-db.ts",
+    "gmat:backfill": "tsx scripts/backfill-gmat-topic-inventory.ts",
+    "gmat:backfill-subtopics": "tsx scripts/backfill-gmat-subtopics.ts",
     "backfill:audio": "tsx scripts/backfill-audio.ts",
     "backfill:transcripts": "tsx scripts/backfill-transcripts.ts"
   },

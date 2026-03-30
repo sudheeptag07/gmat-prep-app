@@ -1,4 +1,5 @@
-import type { FeedbackCriterion, InterviewFeedback, NextRoundQuestion } from '@/lib/types';
+import type { InterviewFeedback, NextRoundQuestion, Recommendation, RubricEntry } from '@/lib/types';
+import type { GmatQuestion, GmatTopic } from '@/lib/gmat-types';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 type CVAnalysis = {
@@ -6,12 +7,28 @@ type CVAnalysis = {
   keySkills: string[];
 };
 
+type AssignmentAnalysis = {
+  summary: string;
+};
+
+const RUBRIC_CRITERIA = [
+  'Geospatial fundamentals',
+  'Workflow thinking',
+  'Drone data understanding',
+  'Problem solving',
+  'Assignment depth',
+  'AI usage quality',
+  'Communication clarity',
+  'Delivery mindset',
+  'Learning ability',
+  'Skylark fit'
+] as const;
+
 function getModel() {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured.');
 
-  const client = new GoogleGenerativeAI(apiKey);
-  return client;
+  return new GoogleGenerativeAI(apiKey);
 }
 
 async function generateWithFallback(prompt: string) {
@@ -43,119 +60,373 @@ function parseJsonLoose(raw: string): Record<string, unknown> {
     const start = cleaned.indexOf('{');
     const end = cleaned.lastIndexOf('}');
     if (start >= 0 && end > start) {
-      const maybe = cleaned.slice(start, end + 1);
-      return JSON.parse(maybe) as Record<string, unknown>;
+      return JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
     }
     throw new Error('Unable to parse Gemini JSON output.');
   }
 }
 
-export async function analyzeCV(cvText: string): Promise<CVAnalysis> {
-  const prompt = `You are an expert recruiter. Analyze this CV text and return strict JSON with keys: summary (exactly 3 sentences), keySkills (array of max 12 concise skills).\n\nCV:\n${cvText.slice(0, 12000)}`;
-  const result = await generateWithFallback(prompt);
-  const raw = result.response.text();
+function clampScore(value: unknown): number {
+  const score = Number(value);
+  if (!Number.isFinite(score)) return 0;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
 
-  const sanitized = raw.replace(/```json|```/g, '').trim();
-  const parsed = JSON.parse(sanitized) as Partial<CVAnalysis>;
+function normalizeRecommendation(value: unknown): Recommendation {
+  const raw = String(value ?? '').trim();
+  if (
+    raw === 'strong_shortlist' ||
+    raw === 'shortlist' ||
+    raw === 'borderline' ||
+    raw === 'reject' ||
+    raw === 'manual_review'
+  ) {
+    return raw;
+  }
+  return 'manual_review';
+}
+
+function normalizeEvidence(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function normalizeStringList(value: unknown, limit: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function normalizeForDedup(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isSingleSentenceLike(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const sentenceMarks = (trimmed.match(/[.!?]/g) ?? []).length;
+  return sentenceMarks <= 2 && trimmed.length <= 180;
+}
+
+function hasDistinctChoices(choices: string[]): boolean {
+  const normalized = choices.map((item) => normalizeForDedup(item));
+  return new Set(normalized).size === choices.length;
+}
+
+type GeneratedGmatQuestion = Omit<GmatQuestion, 'id'>;
+
+export async function generateGmatQuestions(input: {
+  topic: GmatTopic;
+  subtopic: string;
+  count: number;
+}): Promise<GeneratedGmatQuestion[]> {
+  const safeCount = Math.max(1, Math.min(10, Math.round(input.count)));
+  const prompt = `You generate high-quality GMAT-style practice questions.
+
+Return strict JSON:
+{
+  "questions": [
+    {
+      "topic": "Quant|Verbal|Data Insights",
+      "subtopic": "string",
+      "difficulty": "Easy|Medium|Hard",
+      "prompt": "short title",
+      "stem": "full question stem",
+      "choices": ["A","B","C","D","E"],
+      "correctAnswer": "must exactly match one choice",
+      "recommendedTimeSeconds": 75-180 integer,
+      "concepts": ["..."],
+      "strategyTags": ["..."],
+      "trapType": "string",
+      "patternType": "string",
+      "standardSolution": ["step 1", "step 2", "step 3"],
+      "alternativeMethods": [
+        {
+          "name": "method name",
+          "steps": ["..."],
+          "whyItWorks": "string",
+          "speed": "Fast|Medium|Slow",
+          "reliability": "High|Medium",
+          "cognitiveLoad": "Low|Medium|High",
+          "whenToUse": "string"
+        }
+      ],
+      "topScorerNotice": "string",
+      "commonTrap": "string",
+      "timeSavingInsight": "string"
+    }
+  ]
+}
+
+Rules:
+- Generate exactly ${safeCount} unique questions.
+- Topic must be "${input.topic}".
+- Subtopic must be "${input.subtopic}".
+- No markdown, no explanation.
+- Avoid ambiguous wording. One correct answer only.
+- Keep language concise and exam-like.`;
+  let parsed: { questions?: Array<Record<string, unknown>> } = {};
+  try {
+    const result = await generateWithFallback(prompt);
+    parsed = parseJsonLoose(result.response.text()) as { questions?: Array<Record<string, unknown>> };
+    if (!Array.isArray(parsed.questions)) {
+      const retry = await generateWithFallback(`${prompt}\n\nReturn JSON only. No markdown.`);
+      parsed = parseJsonLoose(retry.response.text()) as { questions?: Array<Record<string, unknown>> };
+    }
+  } catch {
+    return [];
+  }
+
+  const rows = Array.isArray(parsed.questions) ? parsed.questions : [];
+  const normalized = rows
+    .map((row) => {
+      const choices = normalizeStringList(row.choices, 5);
+      const correctAnswer = String(row.correctAnswer ?? '').trim();
+      if (choices.length !== 5 || !choices.includes(correctAnswer) || !hasDistinctChoices(choices)) return null;
+
+      const methodsRaw = Array.isArray(row.alternativeMethods) ? row.alternativeMethods : [];
+      const alternativeMethods = methodsRaw
+        .map((method) => {
+          const m = method as Record<string, unknown>;
+          const speed = String(m.speed ?? 'Medium');
+          const reliability = String(m.reliability ?? 'Medium');
+          const cognitiveLoad = String(m.cognitiveLoad ?? 'Medium');
+          if (!['Fast', 'Medium', 'Slow'].includes(speed)) return null;
+          if (!['High', 'Medium'].includes(reliability)) return null;
+          if (!['Low', 'Medium', 'High'].includes(cognitiveLoad)) return null;
+          return {
+            name: String(m.name ?? '').trim(),
+            steps: normalizeStringList(m.steps, 6),
+            whyItWorks: String(m.whyItWorks ?? '').trim(),
+            speed: speed as 'Fast' | 'Medium' | 'Slow',
+            reliability: reliability as 'High' | 'Medium',
+            cognitiveLoad: cognitiveLoad as 'Low' | 'Medium' | 'High',
+            whenToUse: String(m.whenToUse ?? '').trim()
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .filter((item) => item.name && item.steps.length > 0 && item.whyItWorks && item.whenToUse)
+        .slice(0, 2);
+
+      if (alternativeMethods.length === 0) return null;
+
+      const difficulty = String(row.difficulty ?? 'Medium').trim();
+      if (!['Easy', 'Medium', 'Hard'].includes(difficulty)) return null;
+
+      const recommendedTimeSeconds = Math.max(75, Math.min(180, Math.round(Number(row.recommendedTimeSeconds ?? 120))));
+
+      const question: GeneratedGmatQuestion = {
+        topic: input.topic,
+        subtopic: input.subtopic,
+        difficulty: difficulty as GmatQuestion['difficulty'],
+        prompt: String(row.prompt ?? '').trim(),
+        stem: String(row.stem ?? '').trim(),
+        choices,
+        correctAnswer,
+        recommendedTimeSeconds,
+        concepts: normalizeStringList(row.concepts, 6),
+        strategyTags: normalizeStringList(row.strategyTags, 6),
+        trapType: String(row.trapType ?? '').trim(),
+        patternType: String(row.patternType ?? '').trim(),
+        standardSolution: normalizeStringList(row.standardSolution, 8),
+        alternativeMethods,
+        topScorerNotice: String(row.topScorerNotice ?? '').trim(),
+        commonTrap: String(row.commonTrap ?? '').trim(),
+        timeSavingInsight: String(row.timeSavingInsight ?? '').trim()
+      };
+
+      const hasMinimumFields =
+        question.prompt &&
+        question.stem.length >= 30 &&
+        question.choices.length === 5 &&
+        question.standardSolution.length >= 3 &&
+        question.concepts.length >= 1 &&
+        question.strategyTags.length >= 1 &&
+        isSingleSentenceLike(question.topScorerNotice) &&
+        isSingleSentenceLike(question.commonTrap) &&
+        isSingleSentenceLike(question.timeSavingInsight);
+
+      return hasMinimumFields ? question : null;
+    })
+    .filter((row): row is GeneratedGmatQuestion => Boolean(row));
+  const deduped: GeneratedGmatQuestion[] = [];
+  const seen = new Set<string>();
+  for (const question of normalized) {
+    const key = normalizeForDedup(`${question.topic}|${question.subtopic}|${question.stem}`);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(question);
+    if (deduped.length >= safeCount) break;
+  }
+
+  return deduped;
+}
+
+export async function analyzeCV(cvText: string): Promise<CVAnalysis> {
+  const prompt = `You are summarizing a GIS candidate CV for a hiring manager.
+Return strict JSON with keys:
+- summary: exactly 3 sentences focused on GIS, spatial data, delivery ownership, and tooling.
+- keySkills: array of up to 12 concise skills.
+
+CV:
+${cvText.slice(0, 12000)}`;
+
+  const result = await generateWithFallback(prompt);
+  const parsed = parseJsonLoose(result.response.text()) as Partial<CVAnalysis>;
 
   return {
-    summary: parsed.summary?.trim() || 'Summary unavailable.',
-    keySkills: Array.isArray(parsed.keySkills) ? parsed.keySkills.map((s) => String(s)) : []
+    summary: String(parsed.summary ?? 'Summary unavailable.').trim(),
+    keySkills: Array.isArray(parsed.keySkills) ? parsed.keySkills.map((item) => String(item)) : []
   };
 }
 
-export async function scoreInterview(input: { cvSummary: string; transcript: string }): Promise<InterviewFeedback> {
-  const prompt = `You are scoring a GTM/Sales interview. Use the CV summary and transcript to generate strict JSON with keys:
-overall_score (integer 0-100), score_status ("computed"), overall_feedback (1-3 concise sentences),
-criteria (array of exactly 5 objects with keys: name, rating, note).
-Allowed criterion names: Ownership, Accountability, Collaboration, Customer Empathy, Adaptability & Ambiguity.
-Allowed ratings: good, neutral, bad.
-Each note must be one short line.
+export async function analyzeAssignment(input: {
+  assignmentText: string;
+  assignmentLink?: string | null;
+  note?: string | null;
+}): Promise<AssignmentAnalysis> {
+  const prompt = `You are summarizing a GIS candidate assignment for a hiring manager.
+Return strict JSON with key:
+- summary: 3-4 sentences describing the problem tackled, data handling approach, GIS reasoning, delivery quality, and open risks.
 
-CV Summary:
-${input.cvSummary.slice(0, 2500)}
+Assignment link:
+${input.assignmentLink ?? 'N/A'}
 
-Transcript:
-${input.transcript.slice(0, 18000)}`;
+Candidate note:
+${input.note ?? 'N/A'}
+
+Assignment content:
+${input.assignmentText.slice(0, 14000)}`;
 
   const result = await generateWithFallback(prompt);
-  const raw = result.response.text();
-  let parsed = parseJsonLoose(raw) as Partial<InterviewFeedback>;
+  const parsed = parseJsonLoose(result.response.text()) as Partial<AssignmentAnalysis>;
 
-  // One retry with stricter format if first parse does not include core keys.
-  if (typeof parsed !== 'object' || parsed === null || (!('overall_score' in parsed) && !Array.isArray(parsed.criteria))) {
-    const retryResult = await generateWithFallback(`${prompt}\n\nReturn JSON only. No markdown, no explanations.`);
-    parsed = parseJsonLoose(retryResult.response.text()) as Partial<InterviewFeedback>;
+  return {
+    summary: String(parsed.summary ?? 'Assignment uploaded. Summary pending.').trim()
+  };
+}
+
+export async function scoreInterview(input: {
+  roleApplied: string;
+  cvSummary: string;
+  assignmentSummary: string;
+  transcript: string;
+}): Promise<InterviewFeedback> {
+  const prompt = `You are evaluating a candidate for ${input.roleApplied} at Skylark Drones.
+
+This interview is about how the candidate reasons through messy real-world spatial problems.
+Do not reward textbook theory unless it is tied to delivery.
+Do not hallucinate evidence.
+If evidence is thin, lower confidence and prefer manual_review.
+
+Return strict JSON with keys:
+- overall_score: integer 0-100
+- recommendation: one of "strong_shortlist" | "shortlist" | "borderline" | "reject" | "manual_review"
+- score_status: "computed"
+- overall_feedback: 2-4 concise sentences
+- confidence: number 0-1
+- strengths: array of 3-5 concise points
+- concerns: array of 2-5 concise points
+- rubric: array of exactly 10 objects with keys:
+  - criteria
+  - score
+  - note
+  - evidence (array of 1-3 direct references like "Transcript: user described cleaning GPS drift before orthomosaic generation")
+
+Use these exact rubric criteria in this order:
+${RUBRIC_CRITERIA.join('\n')}
+
+Rules:
+- Every rubric row must contain evidence from the transcript, CV summary, or assignment summary.
+- Evidence must be grounded and traceable. Do not invent line numbers.
+- If transcript evidence is weak, reflect that in concerns and confidence.
+- Recommendation should reflect evidence quality as well as score.
+
+CV Summary:
+${input.cvSummary.slice(0, 2800)}
+
+Assignment Summary:
+${input.assignmentSummary.slice(0, 2800)}
+
+Transcript:
+${input.transcript.slice(0, 22000)}`;
+
+  const result = await generateWithFallback(prompt);
+  let parsed = parseJsonLoose(result.response.text()) as Partial<InterviewFeedback> & {
+    rubric?: Array<Partial<RubricEntry>>;
+  };
+
+  if (!Array.isArray(parsed.rubric) || typeof parsed.overall_score === 'undefined') {
+    const retry = await generateWithFallback(`${prompt}\n\nReturn JSON only. No markdown. No explanation.`);
+    parsed = parseJsonLoose(retry.response.text()) as Partial<InterviewFeedback> & {
+      rubric?: Array<Partial<RubricEntry>>;
+    };
   }
-  const boundedScore = Math.max(0, Math.min(100, Math.round(Number(parsed.overall_score ?? 0))));
 
-  const criteria: FeedbackCriterion[] = Array.isArray(parsed.criteria)
-    ? parsed.criteria
-        .map((row) => ({
-          name: String((row as { name?: string }).name ?? '').trim(),
-          rating: String((row as { rating?: string | number }).rating ?? '').trim().toLowerCase(),
-          note: String((row as { note?: string }).note ?? '').trim()
+  const rubric = Array.isArray(parsed.rubric)
+    ? parsed.rubric
+        .map((row, index) => ({
+          criteria: String(row.criteria ?? RUBRIC_CRITERIA[index] ?? '').trim(),
+          score: clampScore(row.score),
+          note: String(row.note ?? '').trim(),
+          evidence: normalizeEvidence(row.evidence)
         }))
-        .filter((row) => row.name && row.note)
-        .map((row) => ({
-          name: row.name,
-          rating: (() => {
-            if (row.rating === 'good' || row.rating === 'bad' || row.rating === 'neutral') return row.rating as FeedbackCriterion['rating'];
-            const numeric = Number(row.rating);
-            if (!Number.isNaN(numeric)) {
-              if (numeric >= 70) return 'good';
-              if (numeric <= 39) return 'bad';
-            }
-            return 'neutral';
-          })(),
-          note: row.note
-        }))
+        .filter((row) => row.criteria && row.note && row.evidence.length > 0)
     : [];
 
   return {
-    overall_score: boundedScore,
+    overall_score: clampScore(parsed.overall_score),
+    recommendation: normalizeRecommendation(parsed.recommendation),
     score_status: 'computed',
-    overall_feedback: (parsed.overall_feedback as string | undefined)?.trim() || 'Overall fit is under review.',
-    criteria
+    confidence: Math.max(0, Math.min(1, Number(parsed.confidence ?? 0.55))),
+    overall_feedback: String(parsed.overall_feedback ?? 'Overall fit is under review.').trim(),
+    strengths: Array.isArray(parsed.strengths) ? parsed.strengths.map((item) => String(item).trim()).filter(Boolean).slice(0, 5) : [],
+    concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map((item) => String(item).trim()).filter(Boolean).slice(0, 5) : [],
+    rubric: rubric.length > 0
+      ? rubric.slice(0, 10)
+      : RUBRIC_CRITERIA.map((criteria) => ({
+          criteria,
+          score: 0,
+          note: 'Insufficient grounded evidence.',
+          evidence: ['Transcript: insufficient evidence']
+        }))
   };
 }
 
 export async function generateNextRoundQuestions(input: {
+  roleApplied: string;
   cvText: string;
   cvSummary: string;
+  assignmentSummary: string;
   transcript: string;
-  aiFeedback: string;
-  roleApplied: string;
+  evaluationSummary: string;
 }): Promise<NextRoundQuestion[]> {
-  const prompt = `Generate 5-7 tailored next-round interview questions for a GTM Sales Enablement role.
-
-Role applied for: ${input.roleApplied}
-Company context: Skylark operates in infra-tech (drones, hydrology, solar, enterprise clients).
-Role expectations: convert technical solutions into sales narratives, improve win rates/sales velocity, drive structured GTM execution.
-
-You MUST use:
-- Candidate CV text
-- Current round transcript
-- AI analysis summary
-- Missing signals/gaps (examples: no enterprise selling, weak metrics ownership, weak ops exposure, vague outcomes)
+  const prompt = `Generate 5-7 targeted next-round interview questions for ${input.roleApplied} at Skylark Drones.
 
 Return strict JSON with key:
 - next_round_questions: array of objects with exactly:
-  - question (1-2 lines)
-  - why_skylark (1 line, why it matters for Skylark's GTM stage/complexity)
-  - expected_outcome (1 line, what a strong answer should demonstrate)
-  - evidence (short tag referencing specific source, e.g. "CV: ex-Gartner channel", "Transcript: struggled with pricing")
+  - question
+  - why_skylark
+  - expected_outcome
+  - evidence_gap
 
-Hard rules:
-- Every question must be anchored to specific evidence from CV or transcript.
-- If no evidence exists for a question, do not generate that question.
-- Avoid generic/templated questions.
-- At least 2 questions must probe the candidate's biggest inferred risk area.
-- At least 1 question must test depth behind a strong CV claim.
-- At least 1 question must test ability to translate technical products into sales narratives.
-- At least 1 question must test cross-functional alignment ability.
-- Do not repeat questions already asked in round one.
-- Keep output concise and practical.
+Rules:
+- Every question must be anchored to a specific gap, contradiction, or promising claim from the CV, assignment, or transcript.
+- No generic questions.
+- At least 2 questions must probe the biggest risk area.
+- At least 1 question must test messy data handling.
+- At least 1 question must test assignment ownership.
+- At least 1 question must test delivery judgment with GIS/drone workflows.
+- If the evidence is insufficient, return an empty array.
 
 CV Summary:
 ${input.cvSummary.slice(0, 2500)}
@@ -163,17 +434,20 @@ ${input.cvSummary.slice(0, 2500)}
 CV Text:
 ${input.cvText.slice(0, 12000)}
 
-Interview Transcript (Round 1):
+Assignment Summary:
+${input.assignmentSummary.slice(0, 2500)}
+
+Transcript:
 ${input.transcript.slice(0, 22000)}
 
-AI Analysis Summary:
-${input.aiFeedback.slice(0, 4000)}`;
+Evaluation Summary:
+${input.evaluationSummary.slice(0, 4000)}`;
 
   const result = await generateWithFallback(prompt);
   let parsed = parseJsonLoose(result.response.text()) as { next_round_questions?: Array<Partial<NextRoundQuestion>> };
 
-  if (!Array.isArray(parsed?.next_round_questions)) {
-    const retry = await generateWithFallback(`${prompt}\n\nReturn JSON only. No markdown, no prose.`);
+  if (!Array.isArray(parsed.next_round_questions)) {
+    const retry = await generateWithFallback(`${prompt}\n\nReturn JSON only. No markdown. No explanation.`);
     parsed = parseJsonLoose(retry.response.text()) as { next_round_questions?: Array<Partial<NextRoundQuestion>> };
   }
 
@@ -181,26 +455,17 @@ ${input.aiFeedback.slice(0, 4000)}`;
     ? parsed.next_round_questions
         .map((row) => ({
           question: String(row.question ?? '').trim(),
-          why_skylark: String(
-            ((row as unknown as { why_skylark?: string; reason?: string }).why_skylark ??
-              (row as unknown as { why_skylark?: string; reason?: string }).reason ??
-              '')
-          ).trim(),
-          expected_outcome: String((row as unknown as { expected_outcome?: string }).expected_outcome ?? '').trim(),
-          evidence: String(row.evidence ?? '').trim()
+          why_skylark: String(row.why_skylark ?? '').trim(),
+          expected_outcome: String(row.expected_outcome ?? '').trim(),
+          evidence_gap: String(
+            (row as Record<string, unknown>).evidence_gap ??
+              (row as Record<string, unknown>).evidence ??
+              ''
+          ).trim()
         }))
-        .filter((row) => row.question && row.why_skylark && row.expected_outcome && row.evidence)
+        .filter((row) => row.question && row.why_skylark && row.expected_outcome && row.evidence_gap)
         .slice(0, 7)
     : [];
 
-  if (questions.length < 5) {
-    return [];
-  }
-
-  return questions.map((row) => ({
-    question: row.question.slice(0, 320),
-    why_skylark: row.why_skylark.slice(0, 220),
-    expected_outcome: row.expected_outcome.slice(0, 220),
-    evidence: row.evidence.slice(0, 160)
-  }));
+  return questions.length >= 5 ? questions : [];
 }
