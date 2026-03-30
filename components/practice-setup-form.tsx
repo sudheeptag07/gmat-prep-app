@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { type FormEvent, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { GmatTopic } from '@/lib/gmat-types';
 import type { GmatTopicCatalog } from '@/lib/gmat-taxonomy';
 
 export function PracticeSetupForm({ topics }: { topics: GmatTopicCatalog[] }) {
+  const router = useRouter();
   const defaultTopic = topics[0]?.topic ?? 'Quant';
   const [topic, setTopic] = useState<GmatTopic>(defaultTopic);
   const groups = useMemo(() => topics.find((item) => item.topic === topic)?.groups ?? [], [topic, topics]);
@@ -12,6 +14,7 @@ export function PracticeSetupForm({ topics }: { topics: GmatTopicCatalog[] }) {
   const selectedGroup = useMemo(() => groups.find((group) => group.key === groupKey) ?? groups[0], [groupKey, groups]);
   const [subtopic, setSubtopic] = useState<string>('__all__');
   const [questionCount, setQuestionCount] = useState<number>(10);
+  const [isStarting, setIsStarting] = useState(false);
 
   function handleTopicChange(nextTopic: GmatTopic) {
     setTopic(nextTopic);
@@ -28,8 +31,14 @@ export function PracticeSetupForm({ topics }: { topics: GmatTopicCatalog[] }) {
   const hrefBase = `/learn/question?topic=${encodeURIComponent(topic)}&group=${encodeURIComponent(groupKey)}&count=${questionCount}`;
   const href = subtopic !== '__all__' ? `${hrefBase}&subtopic=${encodeURIComponent(subtopic)}` : hrefBase;
 
+  function handleStart(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsStarting(true);
+    router.push(href);
+  }
+
   return (
-    <form className="space-y-6">
+    <form className="space-y-6" onSubmit={handleStart}>
       <div className="grid gap-2">
         <label htmlFor="topic" className="text-sm font-medium text-slate-200">
           Select topic
@@ -102,12 +111,14 @@ export function PracticeSetupForm({ topics }: { topics: GmatTopicCatalog[] }) {
         </select>
       </div>
 
-      <a
-        href={href}
+      <button
+        type="submit"
+        disabled={isStarting}
         className="inline-flex items-center justify-center rounded-full border border-[#f07e25]/60 bg-[#f07e25]/14 px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#f07e25]/22"
       >
-        Start Questions
-      </a>
+        {isStarting ? 'Loading questions...' : 'Start Questions'}
+      </button>
+      <p className="text-xs text-slate-400">First load can take 10-30 seconds while questions are prepared.</p>
     </form>
   );
 }

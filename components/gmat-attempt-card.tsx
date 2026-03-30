@@ -29,6 +29,7 @@ export function GmatAttemptCard({ question }: { question: GmatQuestion }) {
   const [strategyUsed, setStrategyUsed] = useState<GmatStrategyInput>(null);
   const [attempt, setAttempt] = useState<GmatAttemptWithQuestion | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [movingNext, setMovingNext] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const currentSearch = useMemo(() => {
     if (typeof window === 'undefined') return '';
@@ -197,9 +198,10 @@ export function GmatAttemptCard({ question }: { question: GmatQuestion }) {
         <div className="flex flex-wrap gap-3">
           <a
             href={nextHref}
+            onClick={() => setMovingNext(true)}
             className="inline-flex items-center rounded-full border border-[#f07e25]/60 bg-[#f07e25]/14 px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#f07e25]/22"
           >
-            Next question
+            {movingNext ? 'Loading next question...' : 'Next question'}
           </a>
           <a
             href="/review"
