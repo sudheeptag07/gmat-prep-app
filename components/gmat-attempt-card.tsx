@@ -23,6 +23,7 @@ export function GmatAttemptCard({
   const [submitting, setSubmitting] = useState(false);
   const [movingNext, setMovingNext] = useState(false);
   const [savePending, setSavePending] = useState(false);
+  const [queuedNextHref, setQueuedNextHref] = useState<string | null>(null);
   const [hasWarmupRun, setHasWarmupRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const currentSearch = useMemo(() => {
@@ -67,6 +68,11 @@ export function GmatAttemptCard({
       )
     );
   }, [attempt, hasWarmupRun, warmupConfig]);
+
+  useEffect(() => {
+    if (!queuedNextHref || savePending) return;
+    window.location.assign(queuedNextHref);
+  }, [queuedNextHref, savePending]);
 
   const timingLabel = useMemo(() => {
     const delta = elapsed - question.recommendedTimeSeconds;
@@ -237,11 +243,15 @@ export function GmatAttemptCard({
             type="button"
             onClick={() => {
               setMovingNext(true);
+              if (savePending) {
+                setQueuedNextHref(nextHref);
+                return;
+              }
               window.location.assign(nextHref);
             }}
             className="inline-flex items-center rounded-full border border-[#f07e25]/60 bg-[#f07e25]/14 px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#f07e25]/22"
           >
-            {movingNext ? 'Loading next question...' : 'Next question'}
+            {movingNext ? (savePending ? 'Finishing save...' : 'Loading next question...') : 'Next question'}
           </button>
           <Link
             href="/review"
