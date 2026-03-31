@@ -8,11 +8,7 @@ import { GMAT_USER_COOKIE } from '@/lib/gmat-session';
 const payloadSchema = z.object({
   questionId: z.string().min(1),
   selectedAnswer: z.string().min(1),
-  timeTakenSeconds: z.number().int().min(1),
-  strategyUsed: z
-    .enum(['algebra', 'backsolving', 'plugging_numbers', 'logical_elimination', 'estimation', 'assumption_lens', 'guess', 'other'])
-    .nullable(),
-  confidence: z.enum(['low', 'medium', 'high']).nullable()
+  timeTakenSeconds: z.number().int().min(1)
 });
 
 export async function POST(request: Request) {
@@ -30,9 +26,7 @@ export async function POST(request: Request) {
     userId,
     questionId: payload.questionId,
     selectedAnswer: payload.selectedAnswer,
-    timeTakenSeconds: payload.timeTakenSeconds,
-    strategyUsed: payload.strategyUsed,
-    confidence: payload.confidence
+    timeTakenSeconds: payload.timeTakenSeconds
   });
 
   const response = NextResponse.json({ attempt });

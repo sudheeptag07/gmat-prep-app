@@ -6,10 +6,8 @@ import type {
   EncouragementPayload,
   GmatAttempt,
   GmatAttemptWithQuestion,
-  GmatConfidence,
   GmatLearner,
   GmatQuestion,
-  GmatStrategyInput,
   GmatSubtopic,
   GmatTopic
 } from '@/lib/gmat-types';
@@ -149,8 +147,6 @@ export async function ensureSchema() {
         selected_answer TEXT NOT NULL,
         is_correct INTEGER NOT NULL,
         time_taken_seconds INTEGER NOT NULL,
-        strategy_used TEXT,
-        confidence TEXT,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES gmat_users(id),
         FOREIGN KEY (question_id) REFERENCES gmat_questions(id)
@@ -164,8 +160,6 @@ export async function ensureSchema() {
         correct INTEGER NOT NULL,
         time_taken_seconds INTEGER NOT NULL,
         ideal_time_seconds INTEGER,
-        confidence_level TEXT,
-        selected_strategy TEXT,
         inferred_strategy TEXT,
         chosen_answer TEXT,
         correct_answer TEXT,
@@ -255,6 +249,7 @@ async function ensureColumns() {
   const responseColumns = await db.execute('PRAGMA table_info(responses)');
   const webhookColumns = await db.execute('PRAGMA table_info(webhook_events)');
   const gmatAttemptColumns = await db.execute('PRAGMA table_info(gmat_attempts)');
+  const attemptColumns = await db.execute('PRAGMA table_info(attempts)');
 
   async function addColumnIfMissing(
     table: string,
@@ -328,18 +323,21 @@ async function ensureColumns() {
     await db.execute(`ALTER TABLE responses ADD COLUMN company TEXT NOT NULL DEFAULT ''`);
   }
 
-  await addColumnIfMissing(
-    'gmat_attempts',
-    gmatAttemptColumns.rows,
-    'strategy_used',
-    `ALTER TABLE gmat_attempts ADD COLUMN strategy_used TEXT`
-  );
-  await addColumnIfMissing(
-    'gmat_attempts',
-    gmatAttemptColumns.rows,
-    'confidence',
-    `ALTER TABLE gmat_attempts ADD COLUMN confidence TEXT`
-  );
+  const gmatAttemptColumnNames = new Set(gmatAttemptColumns.rows.map((row) => String((row as Record<string, unknown>).name)));
+  const attemptColumnNames = new Set(attemptColumns.rows.map((row) => String((row as Record<string, unknown>).name)));
+
+  if (gmatAttemptColumnNames.has('strategy_used')) {
+    await db.execute('ALTER TABLE gmat_attempts DROP COLUMN strategy_used');
+  }
+  if (gmatAttemptColumnNames.has('confidence')) {
+    await db.execute('ALTER TABLE gmat_attempts DROP COLUMN confidence');
+  }
+  if (attemptColumnNames.has('confidence_level')) {
+    await db.execute('ALTER TABLE attempts DROP COLUMN confidence_level');
+  }
+  if (attemptColumnNames.has('selected_strategy')) {
+    await db.execute('ALTER TABLE attempts DROP COLUMN selected_strategy');
+  }
 
   await db.execute(
     `UPDATE candidates
@@ -513,8 +511,6 @@ function mapGmatAttempt(row: Record<string, unknown>): GmatAttempt {
     selectedAnswer: String(row.selected_answer),
     isCorrect: Number(row.is_correct) === 1,
     timeTakenSeconds: Number(row.time_taken_seconds),
-    strategyUsed: ((row.strategy_used as GmatStrategyInput | null) ?? null),
-    confidence: ((row.confidence as GmatConfidence | null) ?? null),
     createdAt: String(row.created_at)
   };
 }
@@ -524,7 +520,6 @@ type AttemptHistoryRow = {
   timeTakenSeconds: number;
   idealTimeSeconds: number;
   topic: string;
-  selectedStrategy: GmatStrategyInput;
 };
 
 type EncouragementHistoryRow = {
@@ -539,8 +534,7 @@ function mapAttemptHistoryRows(rows: Array<Record<string, unknown>>): AttemptHis
       correct: Number(record.correct ?? 0) === 1,
       timeTakenSeconds: Number(record.time_taken_seconds ?? 0),
       idealTimeSeconds: Number(record.ideal_time_seconds ?? 0),
-      topic: String(record.topic ?? ''),
-      selectedStrategy: ((record.selected_strategy as GmatStrategyInput | null) ?? null)
+      topic: String(record.topic ?? '')
     } satisfies AttemptHistoryRow;
   });
 }
@@ -559,8 +553,6 @@ function deriveEncouragementFlags(input: {
   isCorrect: boolean;
   timeTakenSeconds: number;
   idealTimeSeconds: number;
-  confidence: GmatConfidence;
-  strategyUsed: GmatStrategyInput;
   topic: string;
   attemptHistory: AttemptHistoryRow[];
   attemptsSinceRareSignature: number;
@@ -571,13 +563,7 @@ function deriveEncouragementFlags(input: {
   const isSlowCorrect = input.isCorrect && currentPaceRatio > 1.2;
 
   const recentSameTopic = input.attemptHistory.filter((row) => row.topic === input.topic).slice(0, 5);
-  const lastSameTopic = recentSameTopic[0];
-  const lastUsedWeakStrategy = lastSameTopic?.selectedStrategy === 'guess' || lastSameTopic?.selectedStrategy === 'other';
-  const currentUsesIntentionalStrategy = !!input.strategyUsed && input.strategyUsed !== 'guess' && input.strategyUsed !== 'other';
-  const isStrategyImprovement =
-    currentUsesIntentionalStrategy &&
-    !!lastSameTopic &&
-    (lastUsedWeakStrategy || lastSameTopic.timeTakenSeconds > Math.max(1, lastSameTopic.idealTimeSeconds) * 1.25);
+  const isStrategyImprovement = false;
 
   const baselineTopicHistory = recentSameTopic.slice(0, 3);
   const hadRecentMiss = baselineTopicHistory.some((row) => !row.correct);
@@ -588,10 +574,7 @@ function deriveEncouragementFlags(input: {
   const isTopicImproving = baselineTopicHistory.length > 0 && ((input.isCorrect && hadRecentMiss) || hasPaceLift);
 
   const isIncorrectClose =
-    !input.isCorrect &&
-    (Math.abs(input.timeTakenSeconds - ideal) <= Math.round(ideal * 0.35) ||
-      input.confidence === 'high' ||
-      input.confidence === 'medium');
+    !input.isCorrect && Math.abs(input.timeTakenSeconds - ideal) <= Math.round(ideal * 0.35);
 
   return {
     isFastCorrect,
@@ -1625,8 +1608,6 @@ export async function createGmatAttempt(input: {
   questionId: string;
   selectedAnswer: string;
   timeTakenSeconds: number;
-  strategyUsed: GmatStrategyInput;
-  confidence: GmatConfidence;
 }): Promise<GmatAttempt> {
   await ensureSchema();
   const batched = await db.batch(
@@ -1649,8 +1630,7 @@ export async function createGmatAttempt(input: {
                 correct,
                 time_taken_seconds,
                 ideal_time_seconds,
-                topic,
-                selected_strategy
+                topic
               FROM attempts
               WHERE user_id = ?
               ORDER BY created_at DESC
@@ -1693,8 +1673,6 @@ export async function createGmatAttempt(input: {
     isCorrect,
     timeTakenSeconds: normalizedTimeTaken,
     idealTimeSeconds: question.recommendedTimeSeconds,
-    confidence: input.confidence,
-    strategyUsed: input.strategyUsed,
     topic: question.topic,
     attemptHistory: recentAttemptHistory,
     attemptsSinceRareSignature
@@ -1711,8 +1689,8 @@ export async function createGmatAttempt(input: {
     [
       {
         sql: `INSERT INTO gmat_attempts (
-                id, user_id, question_id, selected_answer, is_correct, time_taken_seconds, strategy_used, confidence, created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                id, user_id, question_id, selected_answer, is_correct, time_taken_seconds, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         args: [
           id,
           input.userId,
@@ -1720,17 +1698,14 @@ export async function createGmatAttempt(input: {
           input.selectedAnswer,
           isCorrect ? 1 : 0,
           normalizedTimeTaken,
-          input.strategyUsed,
-          input.confidence,
           createdAt
         ]
       },
       {
         sql: `INSERT INTO attempts (
                 id, user_id, question_id, topic, subtopic, correct, time_taken_seconds, ideal_time_seconds,
-                confidence_level, selected_strategy, inferred_strategy, chosen_answer, correct_answer,
-                is_common_trap, created_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                inferred_strategy, chosen_answer, correct_answer, is_common_trap, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           id,
           input.userId,
@@ -1740,8 +1715,6 @@ export async function createGmatAttempt(input: {
           isCorrect ? 1 : 0,
           normalizedTimeTaken,
           question.recommendedTimeSeconds,
-          input.confidence,
-          input.strategyUsed,
           question.strategyTags[0] ?? null,
           input.selectedAnswer,
           question.correctAnswer,
@@ -1766,8 +1739,6 @@ export async function createGmatAttempt(input: {
     selectedAnswer: input.selectedAnswer,
     isCorrect,
     timeTakenSeconds: normalizedTimeTaken,
-    strategyUsed: input.strategyUsed,
-    confidence: input.confidence,
     createdAt,
     encouragement
   };

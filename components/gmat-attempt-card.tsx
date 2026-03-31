@@ -2,25 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { GmatAttempt, GmatAttemptWithQuestion, GmatConfidence, GmatQuestion, GmatStrategyInput } from '@/lib/gmat-types';
+import type { GmatAttempt, GmatAttemptWithQuestion, GmatQuestion } from '@/lib/gmat-types';
 import { EncouragementLine } from '@/components/encouragement-line';
-
-const confidenceOptions: Array<{ value: Exclude<GmatConfidence, null>; label: string }> = [
-  { value: 'low', label: 'Low confidence' },
-  { value: 'medium', label: 'Medium confidence' },
-  { value: 'high', label: 'High confidence' }
-];
-
-const strategyOptions: Array<{ value: Exclude<GmatStrategyInput, null>; label: string }> = [
-  { value: 'algebra', label: 'Algebra' },
-  { value: 'backsolving', label: 'Backsolving' },
-  { value: 'plugging_numbers', label: 'Plugging numbers' },
-  { value: 'logical_elimination', label: 'Logical elimination' },
-  { value: 'estimation', label: 'Estimation' },
-  { value: 'assumption_lens', label: 'Assumption lens' },
-  { value: 'guess', label: 'Guess' },
-  { value: 'other', label: 'Other' }
-];
 
 export function GmatAttemptCard({
   question,
@@ -36,8 +19,6 @@ export function GmatAttemptCard({
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState('');
-  const [confidence, setConfidence] = useState<GmatConfidence>(null);
-  const [strategyUsed, setStrategyUsed] = useState<GmatStrategyInput>(null);
   const [attempt, setAttempt] = useState<GmatAttemptWithQuestion | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [movingNext, setMovingNext] = useState(false);
@@ -109,9 +90,7 @@ export function GmatAttemptCard({
         body: JSON.stringify({
           questionId: question.id,
           selectedAnswer,
-          timeTakenSeconds: elapsed || 1,
-          confidence,
-          strategyUsed
+          timeTakenSeconds: elapsed || 1
         })
       });
 
@@ -139,12 +118,6 @@ export function GmatAttemptCard({
     const nextHref = currentSearch
       ? `/learn/question${currentSearch}${currentSearch.includes('?') ? '&' : '?'}fromAttempt=${attempt.id}`
       : `${fallbackHref}&fromAttempt=${attempt.id}`;
-    const confidenceMismatch =
-      attempt.confidence === 'high' && !attempt.isCorrect
-        ? 'High confidence, incorrect result.'
-        : attempt.confidence === 'low' && attempt.isCorrect
-          ? 'Low confidence, but you were correct.'
-          : null;
 
     return (
       <div className="space-y-6">
@@ -172,11 +145,10 @@ export function GmatAttemptCard({
               </p>
             </div>
             <div className="rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
-              <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Confidence</p>
-              <p className="mt-2 text-sm font-semibold text-white">{attempt.confidence ?? 'Not captured'}</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Target</p>
+              <p className="mt-2 text-sm font-semibold text-white">{attempt.question.recommendedTimeSeconds}s recommended</p>
             </div>
           </div>
-          {confidenceMismatch ? <p className="mt-4 text-sm text-[#f7b27a]">{confidenceMismatch}</p> : null}
         </div>
 
         <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
@@ -303,41 +275,6 @@ export function GmatAttemptCard({
       <p className="text-sm text-slate-300">
         {selectedAnswer ? `Selected answer: ${selectedAnswer}` : 'Select one answer to continue.'}
       </p>
-
-      <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
-          <p className="text-sm font-semibold text-white">Confidence</p>
-          <div className="mt-4 space-y-2">
-            {confidenceOptions.map((option) => (
-              <label key={option.value} className="flex items-center gap-3 text-sm text-slate-200">
-                <input
-                  type="radio"
-                  name="confidence"
-                  checked={confidence === option.value}
-                  onChange={() => setConfidence(option.value)}
-                />
-                {option.label}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-5">
-          <p className="text-sm font-semibold text-white">What approach did you use?</p>
-          <select
-            value={strategyUsed ?? ''}
-            onChange={(event) => setStrategyUsed((event.target.value || null) as GmatStrategyInput)}
-            className="spectra-input mt-4 w-full px-4 py-3 text-sm"
-          >
-            <option value="">Select one</option>
-            {strategyOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
 
       {error ? <p className="text-sm text-rose-300">{error}</p> : null}
 

@@ -61,7 +61,7 @@ function selectBaseTrigger(input: EncouragementSelectionInput): EncouragementTri
 function shouldShowRareSignature(input: EncouragementSelectionInput, random: () => number): boolean {
   const hasAttempts = input.totalAttempts >= 15;
   const noRecentRare = input.flags.attemptsSinceRareSignature >= 20;
-  const isEligiblePerformance = input.isCorrect || input.flags.isTopicImproving || input.flags.isStrategyImprovement;
+  const isEligiblePerformance = input.isCorrect || input.flags.isTopicImproving;
   const probabilityGate = random() < RARE_SIGNATURE_PROBABILITY;
 
   return hasAttempts && noRecentRare && isEligiblePerformance && probabilityGate;

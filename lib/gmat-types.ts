@@ -2,17 +2,6 @@ export type GmatTopic = 'Quant' | 'Verbal' | 'Data Insights';
 export type GmatSubtopic = string;
 
 export type GmatDifficulty = 'Easy' | 'Medium' | 'Hard';
-export type GmatConfidence = 'low' | 'medium' | 'high' | null;
-export type GmatStrategyInput =
-  | 'algebra'
-  | 'backsolving'
-  | 'plugging_numbers'
-  | 'logical_elimination'
-  | 'estimation'
-  | 'assumption_lens'
-  | 'guess'
-  | 'other'
-  | null;
 export type GmatSpeedLabel = 'Fast' | 'Medium' | 'Slow';
 export type GmatReliabilityLabel = 'High' | 'Medium';
 export type GmatCognitiveLoad = 'Low' | 'Medium' | 'High';
@@ -76,8 +65,6 @@ export type GmatAttempt = {
   selectedAnswer: string;
   isCorrect: boolean;
   timeTakenSeconds: number;
-  strategyUsed: GmatStrategyInput;
-  confidence: GmatConfidence;
   createdAt: string;
   encouragement?: EncouragementPayload | null;
 };

@@ -39,7 +39,6 @@ export function GmatReviewTable({
               <th className="px-4 py-3 font-medium">Question</th>
               <th className="px-4 py-3 font-medium">Outcome</th>
               <th className="px-4 py-3 font-medium">Time</th>
-              <th className="px-4 py-3 font-medium">Strategy</th>
               <th className="px-4 py-3 font-medium">Insight</th>
             </tr>
           </thead>
@@ -58,7 +57,6 @@ export function GmatReviewTable({
                 <td className="px-4 py-4 text-slate-200">
                   {attempt.timeTakenSeconds}s / target {attempt.question.recommendedTimeSeconds}s
                 </td>
-                <td className="px-4 py-4 text-slate-300">{attempt.strategyUsed ?? 'not captured'}</td>
                 <td className="px-4 py-4 text-slate-300">{attempt.question.timeSavingInsight}</td>
               </tr>
             ))}
