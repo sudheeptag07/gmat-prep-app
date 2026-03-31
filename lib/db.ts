@@ -179,7 +179,15 @@ export async function ensureSchema() {
         trigger_type TEXT NOT NULL,
         message_text TEXT NOT NULL,
         shown_at TEXT NOT NULL
-      )`
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_gmat_questions_topic_subtopic_difficulty
+       ON gmat_questions (topic, subtopic, difficulty)`,
+      `CREATE INDEX IF NOT EXISTS idx_gmat_attempts_user_question
+       ON gmat_attempts (user_id, question_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_attempts_user_created_at
+       ON attempts (user_id, created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_encouragement_history_user_shown_at
+       ON encouragement_history (user_id, shown_at DESC)`
     ],
     'write'
   );
@@ -1486,9 +1494,11 @@ export async function ensureMinimumQuestionsPerSubtopic(minimumPerSubtopic = 20)
 export async function getNextGmatQuestionForUser(
   userId: string,
   topic?: string,
-  subtopic?: string
+  subtopic?: string,
+  options?: { allowGeneration?: boolean }
 ): Promise<GmatQuestion | null> {
   await ensureSchema();
+  const allowGeneration = options?.allowGeneration ?? true;
   if (topic && subtopic) {
     const subtopicResult = await db.execute({
       sql: `SELECT q.*
@@ -1513,7 +1523,7 @@ export async function getNextGmatQuestionForUser(
       return mapGmatQuestion(subtopicRow);
     }
 
-    if (isValidGmatTopic(topic)) {
+    if (allowGeneration && isValidGmatTopic(topic)) {
       try {
         await generateAndStoreGmatQuestions({ topic, subtopic, count: 5 });
       } catch {
@@ -1589,6 +1599,7 @@ export async function getNextGmatQuestionForUserInSubtopics(input: {
   userId: string;
   topic: GmatTopic;
   subtopics: string[];
+  allowGeneration?: boolean;
 }): Promise<GmatQuestion | null> {
   await ensureSchema();
   const subtopics = input.subtopics.map((item) => item.trim()).filter(Boolean);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import type { GmatAttemptWithQuestion, GmatConfidence, GmatQuestion, GmatStrategyInput } from '@/lib/gmat-types';
 import { EncouragementLine } from '@/components/encouragement-line';
 
@@ -21,7 +22,17 @@ const strategyOptions: Array<{ value: Exclude<GmatStrategyInput, null>; label: s
   { value: 'other', label: 'Other' }
 ];
 
-export function GmatAttemptCard({ question }: { question: GmatQuestion }) {
+export function GmatAttemptCard({
+  question,
+  warmupConfig
+}: {
+  question: GmatQuestion;
+  warmupConfig?: {
+    topic: GmatQuestion['topic'];
+    subtopic?: string;
+    groupSubtopics?: string[];
+  };
+}) {
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState('');
@@ -30,6 +41,7 @@ export function GmatAttemptCard({ question }: { question: GmatQuestion }) {
   const [attempt, setAttempt] = useState<GmatAttemptWithQuestion | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [movingNext, setMovingNext] = useState(false);
+  const [hasWarmupRun, setHasWarmupRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const currentSearch = useMemo(() => {
     if (typeof window === 'undefined') return '';
@@ -43,6 +55,36 @@ export function GmatAttemptCard({ question }: { question: GmatQuestion }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [attempt, startedAt]);
+
+  useEffect(() => {
+    if (!attempt || hasWarmupRun || !warmupConfig) return;
+
+    const targets =
+      warmupConfig.subtopic && warmupConfig.subtopic.trim()
+        ? [warmupConfig.subtopic.trim()]
+        : (warmupConfig.groupSubtopics ?? []).slice(0, 3);
+    const uniqueTargets = Array.from(new Set(targets.filter(Boolean)));
+
+    if (uniqueTargets.length === 0) {
+      setHasWarmupRun(true);
+      return;
+    }
+
+    setHasWarmupRun(true);
+    void Promise.allSettled(
+      uniqueTargets.map((target, index) =>
+        fetch('/api/gmat/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: warmupConfig.topic,
+            subtopic: target,
+            count: index === 0 ? 3 : 2
+          })
+        })
+      )
+    );
+  }, [attempt, hasWarmupRun, warmupConfig]);
 
   const timingLabel = useMemo(() => {
     const delta = elapsed - question.recommendedTimeSeconds;
@@ -196,19 +238,19 @@ export function GmatAttemptCard({ question }: { question: GmatQuestion }) {
         </section>
 
         <div className="flex flex-wrap gap-3">
-          <a
+          <Link
             href={nextHref}
             onClick={() => setMovingNext(true)}
             className="inline-flex items-center rounded-full border border-[#f07e25]/60 bg-[#f07e25]/14 px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#f07e25]/22"
           >
             {movingNext ? 'Loading next question...' : 'Next question'}
-          </a>
-          <a
+          </Link>
+          <Link
             href="/review"
             className="inline-flex items-center rounded-full border border-white/10 px-5 py-3 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white"
           >
             Review attempts
-          </a>
+          </Link>
         </div>
       </div>
     );

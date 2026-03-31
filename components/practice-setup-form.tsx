@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { GmatTopic } from '@/lib/gmat-types';
 import type { GmatTopicCatalog } from '@/lib/gmat-taxonomy';
@@ -30,6 +30,10 @@ export function PracticeSetupForm({ topics }: { topics: GmatTopicCatalog[] }) {
 
   const hrefBase = `/learn/question?topic=${encodeURIComponent(topic)}&group=${encodeURIComponent(groupKey)}&count=${questionCount}`;
   const href = subtopic !== '__all__' ? `${hrefBase}&subtopic=${encodeURIComponent(subtopic)}` : hrefBase;
+
+  useEffect(() => {
+    router.prefetch(href);
+  }, [href, router]);
 
   function handleStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

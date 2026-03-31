@@ -18,56 +18,53 @@ export default async function LearnQuestionPage({
   const userId = cookies().get(GMAT_USER_COOKIE)?.value ?? 'preview-user';
   const selectedTopic = topic === 'Quant' || topic === 'Verbal' || topic === 'Data Insights' ? (topic as GmatTopic) : null;
   const groupSubtopics = selectedTopic && group ? getGroupItems(selectedTopic, group) : [];
-
-  if (selectedTopic) {
-    if (subtopic) {
-      try {
-        await ensureGmatQuestionPoolForUser({
-          userId,
-          topic: selectedTopic,
-          subtopic,
-          desiredCount: requestedCount
-        });
-      } catch {
-        // Fall back to existing inventory if generation fails.
-      }
-    } else if (groupSubtopics.length > 0) {
-      const perSubtopicCount = Math.max(1, Math.ceil(requestedCount / groupSubtopics.length));
-      await Promise.all(
-        groupSubtopics.map(async (entry) => {
-          try {
-            await ensureGmatQuestionPoolForUser({
-              userId,
-              topic: selectedTopic,
-              subtopic: entry,
-              desiredCount: perSubtopicCount
-            });
-          } catch {
-            return;
-          }
-        })
-      );
-    } else {
-      try {
-        await ensureGmatQuestionPoolForUser({
-          userId,
-          topic: selectedTopic,
-          desiredCount: requestedCount
-        });
-      } catch {
-        // Fall back to existing inventory if generation fails.
-      }
-    }
-  }
-
-  const question =
+  let question =
     selectedTopic && !subtopic && groupSubtopics.length > 0
       ? await getNextGmatQuestionForUserInSubtopics({
           userId,
           topic: selectedTopic,
-          subtopics: groupSubtopics
+          subtopics: groupSubtopics,
+          allowGeneration: false
         })
-      : await getNextGmatQuestionForUser(userId, topic, subtopic);
+      : await getNextGmatQuestionForUser(userId, topic, subtopic, { allowGeneration: false });
+
+  if (!question && selectedTopic) {
+    try {
+      if (subtopic) {
+        await ensureGmatQuestionPoolForUser({
+          userId,
+          topic: selectedTopic,
+          subtopic,
+          desiredCount: Math.min(3, requestedCount)
+        });
+      } else if (groupSubtopics.length > 0) {
+        await ensureGmatQuestionPoolForUser({
+          userId,
+          topic: selectedTopic,
+          subtopic: groupSubtopics[0],
+          desiredCount: 3
+        });
+      } else {
+        await ensureGmatQuestionPoolForUser({
+          userId,
+          topic: selectedTopic,
+          desiredCount: 3
+        });
+      }
+    } catch {
+      // Keep the page responsive even when generation is unavailable.
+    }
+
+    question =
+      selectedTopic && !subtopic && groupSubtopics.length > 0
+        ? await getNextGmatQuestionForUserInSubtopics({
+            userId,
+            topic: selectedTopic,
+            subtopics: groupSubtopics,
+            allowGeneration: false
+          })
+        : await getNextGmatQuestionForUser(userId, topic, subtopic, { allowGeneration: false });
+  }
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 pb-16">
@@ -109,7 +106,18 @@ export default async function LearnQuestionPage({
 
       {question ? (
         <section className="glass-panel p-6 md:p-8">
-          <GmatAttemptCard question={question} />
+          <GmatAttemptCard
+            question={question}
+            warmupConfig={
+              selectedTopic
+                ? {
+                    topic: selectedTopic,
+                    subtopic: subtopic ?? undefined,
+                    groupSubtopics: !subtopic && groupSubtopics.length > 0 ? groupSubtopics : []
+                  }
+                : undefined
+            }
+          />
         </section>
       ) : (
         <section className="glass-panel p-8 md:p-10">
