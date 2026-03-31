@@ -475,6 +475,26 @@ function mapGmatQuestion(row: Record<string, unknown>): GmatQuestion {
   };
 }
 
+type GmatAttemptQuestionContext = {
+  id: string;
+  topic: GmatTopic;
+  subtopic: GmatSubtopic;
+  correctAnswer: string;
+  recommendedTimeSeconds: number;
+  strategyTags: string[];
+};
+
+function mapGmatAttemptQuestionContext(row: Record<string, unknown>): GmatAttemptQuestionContext {
+  return {
+    id: String(row.id),
+    topic: String(row.topic) as GmatTopic,
+    subtopic: String(row.subtopic) as GmatSubtopic,
+    correctAnswer: String(row.correct_answer),
+    recommendedTimeSeconds: Number(row.recommended_time_seconds ?? 0),
+    strategyTags: parseJsonArray<string>((row.strategy_tags_json as string | null) ?? null)
+  };
+}
+
 function mapGmatLearner(row: Record<string, unknown>): GmatLearner {
   return {
     id: String(row.id),
@@ -1607,12 +1627,21 @@ export async function createGmatAttempt(input: {
   timeTakenSeconds: number;
   strategyUsed: GmatStrategyInput;
   confidence: GmatConfidence;
-}): Promise<GmatAttemptWithQuestion> {
+}): Promise<GmatAttempt> {
   await ensureSchema();
   const batched = await db.batch(
     [
       {
-        sql: 'SELECT * FROM gmat_questions WHERE id = ? LIMIT 1',
+        sql: `SELECT
+                id,
+                topic,
+                subtopic,
+                correct_answer,
+                recommended_time_seconds,
+                strategy_tags_json
+              FROM gmat_questions
+              WHERE id = ?
+              LIMIT 1`,
         args: [input.questionId]
       },
       {
@@ -1641,7 +1670,7 @@ export async function createGmatAttempt(input: {
   );
 
   const questionRow = batched[0]?.rows?.[0] as Record<string, unknown> | undefined;
-  const question = questionRow ? mapGmatQuestion(questionRow) : null;
+  const question = questionRow ? mapGmatAttemptQuestionContext(questionRow) : null;
   if (!question) {
     throw new Error('Question not found');
   }
@@ -1740,7 +1769,6 @@ export async function createGmatAttempt(input: {
     strategyUsed: input.strategyUsed,
     confidence: input.confidence,
     createdAt,
-    question,
     encouragement
   };
 }

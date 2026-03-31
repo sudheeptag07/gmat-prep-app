@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import type { GmatAttemptWithQuestion, GmatConfidence, GmatQuestion, GmatStrategyInput } from '@/lib/gmat-types';
+import type { GmatAttempt, GmatAttemptWithQuestion, GmatConfidence, GmatQuestion, GmatStrategyInput } from '@/lib/gmat-types';
 import { EncouragementLine } from '@/components/encouragement-line';
 
 const confidenceOptions: Array<{ value: Exclude<GmatConfidence, null>; label: string }> = [
@@ -119,8 +119,11 @@ export function GmatAttemptCard({
         throw new Error('Failed to save attempt');
       }
 
-      const data = (await response.json()) as { attempt: GmatAttemptWithQuestion };
-      setAttempt(data.attempt);
+      const data = (await response.json()) as { attempt: GmatAttempt };
+      setAttempt({
+        ...data.attempt,
+        question
+      });
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : 'Failed to save attempt');
     } finally {
