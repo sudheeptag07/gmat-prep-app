@@ -512,14 +512,6 @@ type EncouragementHistoryRow = {
   messageText: string;
 };
 
-async function getAttemptCountForUser(userId: string): Promise<number> {
-  const result = await db.execute({
-    sql: 'SELECT COUNT(*) AS count FROM attempts WHERE user_id = ?',
-    args: [userId]
-  });
-  return Number((result.rows[0] as Record<string, unknown> | undefined)?.count ?? 0);
-}
-
 async function getRecentAttemptHistory(userId: string, limit = 40): Promise<AttemptHistoryRow[]> {
   const result = await db.execute({
     sql: `SELECT
@@ -1648,8 +1640,7 @@ export async function createGmatAttempt(input: {
   const isCorrect = input.selectedAnswer === question.correctAnswer;
   const normalizedTimeTaken = Math.max(1, Math.round(input.timeTakenSeconds));
 
-  const [attemptCountBefore, recentAttemptHistory, recentEncouragement] = await Promise.all([
-    getAttemptCountForUser(input.userId),
+  const [recentAttemptHistory, recentEncouragement] = await Promise.all([
     getRecentAttemptHistory(input.userId),
     getRecentEncouragementHistory(input.userId)
   ]);
@@ -1671,28 +1662,27 @@ export async function createGmatAttempt(input: {
     isCorrect,
     flags,
     recentMessages: recentEncouragement.map((entry) => entry.messageText),
-    totalAttempts: attemptCountBefore + 1
-  });
-
-  await db.execute({
-    sql: `INSERT INTO gmat_attempts (
-      id, user_id, question_id, selected_answer, is_correct, time_taken_seconds, strategy_used, confidence, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      id,
-      input.userId,
-      input.questionId,
-      input.selectedAnswer,
-      isCorrect ? 1 : 0,
-      normalizedTimeTaken,
-      input.strategyUsed,
-      input.confidence,
-      createdAt
-    ]
+    totalAttempts: recentAttemptHistory.length + 1
   });
 
   await db.batch(
     [
+      {
+        sql: `INSERT INTO gmat_attempts (
+                id, user_id, question_id, selected_answer, is_correct, time_taken_seconds, strategy_used, confidence, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          id,
+          input.userId,
+          input.questionId,
+          input.selectedAnswer,
+          isCorrect ? 1 : 0,
+          normalizedTimeTaken,
+          input.strategyUsed,
+          input.confidence,
+          createdAt
+        ]
+      },
       {
         sql: `INSERT INTO attempts (
                 id, user_id, question_id, topic, subtopic, correct, time_taken_seconds, ideal_time_seconds,
@@ -1727,17 +1717,16 @@ export async function createGmatAttempt(input: {
     'write'
   );
 
-  const result = await db.execute({
-    sql: 'SELECT * FROM gmat_attempts WHERE id = ? LIMIT 1',
-    args: [id]
-  });
-  const row = result.rows[0] as Record<string, unknown> | undefined;
-  if (!row) {
-    throw new Error('Failed to load created attempt');
-  }
-
   return {
-    ...mapGmatAttempt(row),
+    id,
+    userId: input.userId,
+    questionId: input.questionId,
+    selectedAnswer: input.selectedAnswer,
+    isCorrect,
+    timeTakenSeconds: normalizedTimeTaken,
+    strategyUsed: input.strategyUsed,
+    confidence: input.confidence,
+    createdAt,
     question,
     encouragement
   };
