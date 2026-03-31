@@ -24,6 +24,7 @@ export function GmatAttemptCard({
   const [attempt, setAttempt] = useState<GmatAttemptWithQuestion | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [movingNext, setMovingNext] = useState(false);
+  const [savePending, setSavePending] = useState(false);
   const [hasWarmupRun, setHasWarmupRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const currentSearch = useMemo(() => {
@@ -82,8 +83,22 @@ export function GmatAttemptCard({
       return;
     }
 
+    const timeTakenSeconds = elapsed || 1;
+    const optimisticAttempt: GmatAttemptWithQuestion = {
+      id: `temp-${Date.now()}`,
+      userId: 'pending',
+      questionId: question.id,
+      selectedAnswer,
+      isCorrect: selectedAnswer === question.correctAnswer,
+      timeTakenSeconds,
+      createdAt: new Date().toISOString(),
+      question
+    };
+
     setSubmitting(true);
+    setSavePending(true);
     setError(null);
+    setAttempt(optimisticAttempt);
 
     try {
       const response = await fetch('/api/gmat/attempts', {
@@ -92,7 +107,7 @@ export function GmatAttemptCard({
         body: JSON.stringify({
           questionId: question.id,
           selectedAnswer,
-          timeTakenSeconds: elapsed || 1
+          timeTakenSeconds
         })
       });
 
@@ -109,6 +124,7 @@ export function GmatAttemptCard({
       setError(submissionError instanceof Error ? submissionError.message : 'Failed to save attempt');
     } finally {
       setSubmitting(false);
+      setSavePending(false);
     }
   }
 
@@ -137,6 +153,8 @@ export function GmatAttemptCard({
           {attempt.encouragement ? (
             <EncouragementLine message={attempt.encouragement.message} triggerType={attempt.encouragement.triggerType} />
           ) : null}
+          {savePending ? <p className="mt-3 text-sm text-slate-400">Saving your attempt in the background...</p> : null}
+          {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             <div className="rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
               <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Result</p>
