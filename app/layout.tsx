@@ -24,14 +24,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <p className="text-lg font-semibold tracking-tight text-white">Seeing GMAT</p>
             </div>
             <nav className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
-              <Link href="/#product" className="rounded-full border border-white/10 px-4 py-2 transition hover:border-[#f3a45b]/60 hover:text-white">
-                Product
-              </Link>
-              <Link href="/#loop" className="rounded-full border border-white/10 px-4 py-2 transition hover:border-[#f3a45b]/60 hover:text-white">
-                Core Loop
-              </Link>
-              <Link href="/#roadmap" className="rounded-full border border-white/10 px-4 py-2 transition hover:border-[#f3a45b]/60 hover:text-white">
-                Roadmap
+              <Link href="/learn" className="rounded-full border border-white/10 px-4 py-2 transition hover:border-[#f3a45b]/60 hover:text-white">
+                Practice Home
               </Link>
             </nav>
           </header>
