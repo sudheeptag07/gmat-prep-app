@@ -21,7 +21,11 @@ export async function POST(request: Request) {
 
   const json = await request.json();
   const payload = payloadSchema.parse(json);
-  await ensureGmatLearner(userId);
+
+  if (!existingUserId) {
+    await ensureGmatLearner(userId);
+  }
+
   const attempt = await createGmatAttempt({
     userId,
     questionId: payload.questionId,

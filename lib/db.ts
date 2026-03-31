@@ -512,21 +512,8 @@ type EncouragementHistoryRow = {
   messageText: string;
 };
 
-async function getRecentAttemptHistory(userId: string, limit = 40): Promise<AttemptHistoryRow[]> {
-  const result = await db.execute({
-    sql: `SELECT
-            correct,
-            time_taken_seconds,
-            ideal_time_seconds,
-            topic,
-            selected_strategy
-          FROM attempts
-          WHERE user_id = ?
-          ORDER BY created_at DESC
-          LIMIT ?`,
-    args: [userId, limit]
-  });
-  return result.rows.map((row) => {
+function mapAttemptHistoryRows(rows: Array<Record<string, unknown>>): AttemptHistoryRow[] {
+  return rows.map((row) => {
     const record = row as Record<string, unknown>;
     return {
       correct: Number(record.correct ?? 0) === 1,
@@ -538,16 +525,8 @@ async function getRecentAttemptHistory(userId: string, limit = 40): Promise<Atte
   });
 }
 
-async function getRecentEncouragementHistory(userId: string, limit = 30): Promise<EncouragementHistoryRow[]> {
-  const result = await db.execute({
-    sql: `SELECT trigger_type, message_text
-          FROM encouragement_history
-          WHERE user_id = ?
-          ORDER BY shown_at DESC
-          LIMIT ?`,
-    args: [userId, limit]
-  });
-  return result.rows.map((row) => {
+function mapEncouragementHistoryRows(rows: Array<Record<string, unknown>>): EncouragementHistoryRow[] {
+  return rows.map((row) => {
     const record = row as Record<string, unknown>;
     return {
       triggerType: String(record.trigger_type ?? ''),
@@ -1630,7 +1609,39 @@ export async function createGmatAttempt(input: {
   confidence: GmatConfidence;
 }): Promise<GmatAttemptWithQuestion> {
   await ensureSchema();
-  const question = await getGmatQuestionById(input.questionId);
+  const batched = await db.batch(
+    [
+      {
+        sql: 'SELECT * FROM gmat_questions WHERE id = ? LIMIT 1',
+        args: [input.questionId]
+      },
+      {
+        sql: `SELECT
+                correct,
+                time_taken_seconds,
+                ideal_time_seconds,
+                topic,
+                selected_strategy
+              FROM attempts
+              WHERE user_id = ?
+              ORDER BY created_at DESC
+              LIMIT 15`,
+        args: [input.userId]
+      },
+      {
+        sql: `SELECT trigger_type, message_text
+              FROM encouragement_history
+              WHERE user_id = ?
+              ORDER BY shown_at DESC
+              LIMIT 20`,
+        args: [input.userId]
+      }
+    ],
+    'read'
+  );
+
+  const questionRow = batched[0]?.rows?.[0] as Record<string, unknown> | undefined;
+  const question = questionRow ? mapGmatQuestion(questionRow) : null;
   if (!question) {
     throw new Error('Question not found');
   }
@@ -1640,10 +1651,12 @@ export async function createGmatAttempt(input: {
   const isCorrect = input.selectedAnswer === question.correctAnswer;
   const normalizedTimeTaken = Math.max(1, Math.round(input.timeTakenSeconds));
 
-  const [recentAttemptHistory, recentEncouragement] = await Promise.all([
-    getRecentAttemptHistory(input.userId),
-    getRecentEncouragementHistory(input.userId)
-  ]);
+  const recentAttemptHistory = mapAttemptHistoryRows(
+    (batched[1]?.rows ?? []) as Array<Record<string, unknown>>
+  );
+  const recentEncouragement = mapEncouragementHistoryRows(
+    (batched[2]?.rows ?? []) as Array<Record<string, unknown>>
+  );
 
   const recentRareIndex = recentEncouragement.findIndex((entry) => entry.triggerType === 'rare_signature');
   const attemptsSinceRareSignature = recentRareIndex >= 0 ? recentRareIndex : Number.POSITIVE_INFINITY;
