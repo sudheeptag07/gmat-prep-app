@@ -9,11 +9,12 @@ import { getGroupItems } from '@/lib/gmat-taxonomy';
 export default async function LearnQuestionPage({
   searchParams
 }: {
-  searchParams?: { topic?: string; group?: string; subtopic?: string; count?: string };
+  searchParams?: { topic?: string; group?: string; subtopic?: string; count?: string; excludeQuestionId?: string };
 }) {
   const topic = searchParams?.topic;
   const group = searchParams?.group;
   const subtopic = searchParams?.subtopic;
+  const excludeQuestionId = searchParams?.excludeQuestionId;
   const requestedCount = Math.max(1, Math.min(50, Number(searchParams?.count ?? 10) || 10));
   const userId = cookies().get(GMAT_USER_COOKIE)?.value ?? 'preview-user';
   const selectedTopic = topic === 'Quant' || topic === 'Verbal' || topic === 'Data Insights' ? (topic as GmatTopic) : null;
@@ -24,9 +25,10 @@ export default async function LearnQuestionPage({
           userId,
           topic: selectedTopic,
           subtopics: groupSubtopics,
-          allowGeneration: false
+          allowGeneration: false,
+          excludeQuestionId
         })
-      : await getNextGmatQuestionForUser(userId, topic, subtopic, { allowGeneration: false });
+      : await getNextGmatQuestionForUser(userId, topic, subtopic, { allowGeneration: false, excludeQuestionId });
 
   if (!question && selectedTopic) {
     try {
@@ -61,9 +63,10 @@ export default async function LearnQuestionPage({
             userId,
             topic: selectedTopic,
             subtopics: groupSubtopics,
-            allowGeneration: false
+            allowGeneration: false,
+            excludeQuestionId
           })
-        : await getNextGmatQuestionForUser(userId, topic, subtopic, { allowGeneration: false });
+        : await getNextGmatQuestionForUser(userId, topic, subtopic, { allowGeneration: false, excludeQuestionId });
   }
 
   return (

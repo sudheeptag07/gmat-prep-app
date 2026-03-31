@@ -1469,20 +1469,25 @@ export async function getNextGmatQuestionForUser(
   userId: string,
   topic?: string,
   subtopic?: string,
-  options?: { allowGeneration?: boolean }
+  options?: { allowGeneration?: boolean; excludeQuestionId?: string }
 ): Promise<GmatQuestion | null> {
   await ensureSchema();
   const allowGeneration = options?.allowGeneration ?? true;
+  const excludeQuestionId = options?.excludeQuestionId?.trim();
   if (topic && subtopic) {
+    const where = ['q.topic = ?', 'q.subtopic = ?', 'a.id IS NULL'];
+    const args: Array<string | number> = [userId, topic, subtopic];
+    if (excludeQuestionId) {
+      where.push('q.id != ?');
+      args.push(excludeQuestionId);
+    }
     const subtopicResult = await db.execute({
       sql: `SELECT q.*
             FROM gmat_questions q
             LEFT JOIN gmat_attempts a
               ON a.question_id = q.id
              AND a.user_id = ?
-            WHERE q.topic = ?
-              AND q.subtopic = ?
-              AND a.id IS NULL
+            WHERE ${where.join(' AND ')}
             ORDER BY
               CASE q.difficulty
                 WHEN 'Easy' THEN 1
@@ -1490,7 +1495,7 @@ export async function getNextGmatQuestionForUser(
                 ELSE 3
               END
             LIMIT 1`,
-      args: [userId, topic, subtopic]
+      args
     });
     const subtopicRow = subtopicResult.rows[0] as Record<string, unknown> | undefined;
     if (subtopicRow) {
@@ -1510,9 +1515,7 @@ export async function getNextGmatQuestionForUser(
               LEFT JOIN gmat_attempts a
                 ON a.question_id = q.id
                AND a.user_id = ?
-              WHERE q.topic = ?
-                AND q.subtopic = ?
-                AND a.id IS NULL
+              WHERE ${where.join(' AND ')}
               ORDER BY
                 CASE q.difficulty
                   WHEN 'Easy' THEN 1
@@ -1520,7 +1523,7 @@ export async function getNextGmatQuestionForUser(
                   ELSE 3
                 END
               LIMIT 1`,
-        args: [userId, topic, subtopic]
+        args
       });
       const regeneratedRow = regeneratedResult.rows[0] as Record<string, unknown> | undefined;
       if (regeneratedRow) {
@@ -1530,14 +1533,19 @@ export async function getNextGmatQuestionForUser(
   }
 
   if (topic) {
+    const where = ['q.topic = ?', 'a.id IS NULL'];
+    const args: Array<string | number> = [userId, topic];
+    if (excludeQuestionId) {
+      where.push('q.id != ?');
+      args.push(excludeQuestionId);
+    }
     const topicResult = await db.execute({
       sql: `SELECT q.*
             FROM gmat_questions q
             LEFT JOIN gmat_attempts a
               ON a.question_id = q.id
              AND a.user_id = ?
-            WHERE q.topic = ?
-              AND a.id IS NULL
+            WHERE ${where.join(' AND ')}
             ORDER BY
               CASE q.difficulty
                 WHEN 'Easy' THEN 1
@@ -1546,7 +1554,7 @@ export async function getNextGmatQuestionForUser(
               END,
               q.subtopic
             LIMIT 1`,
-      args: [userId, topic]
+      args
     });
     const topicRow = topicResult.rows[0] as Record<string, unknown> | undefined;
     if (topicRow) {
@@ -1554,16 +1562,22 @@ export async function getNextGmatQuestionForUser(
     }
   }
 
+  const fallbackWhere = ['a.id IS NULL'];
+  const fallbackArgs: Array<string | number> = [userId];
+  if (excludeQuestionId) {
+    fallbackWhere.push('q.id != ?');
+    fallbackArgs.push(excludeQuestionId);
+  }
   const fallbackResult = await db.execute({
     sql: `SELECT q.*
           FROM gmat_questions q
           LEFT JOIN gmat_attempts a
             ON a.question_id = q.id
            AND a.user_id = ?
-          WHERE a.id IS NULL
+          WHERE ${fallbackWhere.join(' AND ')}
           ORDER BY q.topic, q.subtopic
           LIMIT 1`,
-    args: [userId]
+    args: fallbackArgs
   });
   const fallbackRow = fallbackResult.rows[0] as Record<string, unknown> | undefined;
   return fallbackRow ? mapGmatQuestion(fallbackRow) : null;
@@ -1574,21 +1588,27 @@ export async function getNextGmatQuestionForUserInSubtopics(input: {
   topic: GmatTopic;
   subtopics: string[];
   allowGeneration?: boolean;
+  excludeQuestionId?: string;
 }): Promise<GmatQuestion | null> {
   await ensureSchema();
   const subtopics = input.subtopics.map((item) => item.trim()).filter(Boolean);
   if (subtopics.length === 0) return null;
 
+  const excludeQuestionId = input.excludeQuestionId?.trim();
   const placeholders = subtopics.map(() => '?').join(', ');
+  const where = ['q.topic = ?', `q.subtopic IN (${placeholders})`, 'a.id IS NULL'];
+  const args: Array<string | number> = [input.userId, input.topic, ...subtopics];
+  if (excludeQuestionId) {
+    where.push('q.id != ?');
+    args.push(excludeQuestionId);
+  }
   const result = await db.execute({
     sql: `SELECT q.*
           FROM gmat_questions q
           LEFT JOIN gmat_attempts a
             ON a.question_id = q.id
            AND a.user_id = ?
-          WHERE q.topic = ?
-            AND q.subtopic IN (${placeholders})
-            AND a.id IS NULL
+          WHERE ${where.join(' AND ')}
           ORDER BY
             CASE q.difficulty
               WHEN 'Easy' THEN 1
@@ -1597,7 +1617,7 @@ export async function getNextGmatQuestionForUserInSubtopics(input: {
             END,
             q.subtopic
           LIMIT 1`,
-    args: [input.userId, input.topic, ...subtopics]
+    args
   });
   const row = result.rows[0] as Record<string, unknown> | undefined;
   return row ? mapGmatQuestion(row) : null;

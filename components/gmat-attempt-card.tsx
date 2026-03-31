@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { GmatAttempt, GmatAttemptWithQuestion, GmatQuestion } from '@/lib/gmat-types';
 import { EncouragementLine } from '@/components/encouragement-line';
 
@@ -16,6 +17,7 @@ export function GmatAttemptCard({
     groupSubtopics?: string[];
   };
 }) {
+  const router = useRouter();
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState('');
@@ -115,9 +117,11 @@ export function GmatAttemptCard({
     const fallbackHref = `/learn/question?topic=${encodeURIComponent(attempt.question.topic)}&subtopic=${encodeURIComponent(
       attempt.question.subtopic
     )}`;
-    const nextHref = currentSearch
-      ? `/learn/question${currentSearch}${currentSearch.includes('?') ? '&' : '?'}fromAttempt=${attempt.id}`
-      : `${fallbackHref}&fromAttempt=${attempt.id}`;
+    const params = new URLSearchParams(currentSearch.startsWith('?') ? currentSearch.slice(1) : currentSearch);
+    params.set('fromAttempt', attempt.id);
+    params.set('excludeQuestionId', attempt.question.id);
+    params.set('navToken', String(Date.now()));
+    const nextHref = params.size > 0 ? `/learn/question?${params.toString()}` : `${fallbackHref}&navToken=${Date.now()}`;
 
     return (
       <div className="space-y-6">
@@ -213,13 +217,16 @@ export function GmatAttemptCard({
         </section>
 
         <div className="flex flex-wrap gap-3">
-          <Link
-            href={nextHref}
-            onClick={() => setMovingNext(true)}
+          <button
+            type="button"
+            onClick={() => {
+              setMovingNext(true);
+              router.push(nextHref);
+            }}
             className="inline-flex items-center rounded-full border border-[#f07e25]/60 bg-[#f07e25]/14 px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#f07e25]/22"
           >
             {movingNext ? 'Loading next question...' : 'Next question'}
-          </Link>
+          </button>
           <Link
             href="/review"
             className="inline-flex items-center rounded-full border border-white/10 px-5 py-3 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:text-white"
