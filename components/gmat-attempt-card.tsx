@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import type { GmatAttempt, GmatAttemptWithQuestion, GmatQuestion } from '@/lib/gmat-types';
 import { EncouragementLine } from '@/components/encouragement-line';
 
@@ -17,7 +16,6 @@ export function GmatAttemptCard({
     groupSubtopics?: string[];
   };
 }) {
-  const router = useRouter();
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState('');
@@ -239,7 +237,7 @@ export function GmatAttemptCard({
             type="button"
             onClick={() => {
               setMovingNext(true);
-              router.push(nextHref);
+              window.location.assign(nextHref);
             }}
             className="inline-flex items-center rounded-full border border-[#f07e25]/60 bg-[#f07e25]/14 px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#f07e25]/22"
           >
