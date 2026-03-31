@@ -352,6 +352,24 @@ async function ensureColumns() {
      WHERE ai_score IS NOT NULL
        AND (score_status IS NULL OR score_status = 'missing')`
   );
+
+  await db.execute(
+    `DELETE FROM gmat_questions
+     WHERE LOWER(stem) LIKE '%graph above%'
+        OR LOWER(stem) LIKE '%chart above%'
+        OR LOWER(stem) LIKE '%table above%'
+        OR LOWER(stem) LIKE '%figure above%'
+        OR LOWER(stem) LIKE '%image above%'
+        OR LOWER(stem) LIKE '%diagram above%'
+        OR LOWER(stem) LIKE '%see the graph%'
+        OR LOWER(stem) LIKE '%see the chart%'
+        OR LOWER(stem) LIKE '%see the table%'
+        OR LOWER(stem) LIKE '%refer to the graph%'
+        OR LOWER(stem) LIKE '%refer to the chart%'
+        OR LOWER(stem) LIKE '%refer to the table%'
+        OR LOWER(stem) LIKE '%shown below%'
+        OR LOWER(stem) LIKE '%displayed below%'`
+  );
 }
 
 async function seedGmatQuestions() {

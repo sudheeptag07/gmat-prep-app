@@ -122,6 +122,29 @@ function hasDistinctChoices(choices: string[]): boolean {
   return new Set(normalized).size === choices.length;
 }
 
+function requiresMissingVisual(stem: string): boolean {
+  const normalized = stem.toLowerCase();
+  const visualOnlyPatterns = [
+    'graph above',
+    'chart above',
+    'table above',
+    'figure above',
+    'image above',
+    'diagram above',
+    'shown above',
+    'see the graph',
+    'see the chart',
+    'see the table',
+    'refer to the graph',
+    'refer to the chart',
+    'refer to the table',
+    'displayed below',
+    'shown below'
+  ];
+
+  return visualOnlyPatterns.some((pattern) => normalized.includes(pattern));
+}
+
 type GeneratedGmatQuestion = Omit<GmatQuestion, 'id'>;
 
 export async function generateGmatQuestions(input: {
@@ -173,6 +196,8 @@ Rules:
 - Subtopic must be "${input.subtopic}".
 - No markdown, no explanation.
 - Avoid ambiguous wording. One correct answer only.
+- If the question uses a chart, graph, table, or multi-source data, embed all needed data directly in the stem as plain text or ASCII-style rows so the question is fully solvable without an external visual.
+- Do not refer to missing visuals with phrases like "graph above", "chart below", or "see the table".
 - Keep language concise and exam-like.`;
   let parsed: { questions?: Array<Record<string, unknown>> } = {};
   try {
@@ -247,6 +272,7 @@ Rules:
       const hasMinimumFields =
         question.prompt &&
         question.stem.length >= 30 &&
+        !requiresMissingVisual(question.stem) &&
         question.choices.length === 5 &&
         question.standardSolution.length >= 3 &&
         question.concepts.length >= 1 &&
