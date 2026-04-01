@@ -38,7 +38,8 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'The expression is symmetric, so an identity is more natural than solving for x.',
     commonTrap: 'Trying to solve for x itself before checking whether the target can be derived directly.',
-    timeSavingInsight: 'Always test for identities before expanding or isolating variables.'
+    timeSavingInsight: 'Always test for identities before expanding or isolating variables.',
+    visual: null
   },
   {
     id: 'quant-word-problem-rates-01',
@@ -78,7 +79,8 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'The denominators 6 and 4 invite an LCM of 12, which simplifies the arithmetic immediately.',
     commonTrap: 'Adding the hours directly instead of adding the work rates.',
-    timeSavingInsight: 'In work problems, add work per hour, not time.'
+    timeSavingInsight: 'In work problems, add work per hour, not time.',
+    visual: null
   },
   {
     id: 'quant-number-properties-01',
@@ -117,7 +119,8 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'The stem asks only for the units digit, so the entire expression should collapse to a small cycle.',
     commonTrap: 'Trying to compute large powers numerically.',
-    timeSavingInsight: 'When only the last digit matters, search for the repeat length first.'
+    timeSavingInsight: 'When only the last digit matters, search for the repeat length first.',
+    visual: null
   },
   {
     id: 'verbal-cr-strengthen-01',
@@ -163,7 +166,8 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'The argument depends less on proximity than on actual behavior change.',
     commonTrap: 'Choosing a relevant transportation fact that does not make the conclusion more likely.',
-    timeSavingInsight: 'Strengthen the bridge, not the topic.'
+    timeSavingInsight: 'Strengthen the bridge, not the topic.',
+    visual: null
   },
   {
     id: 'verbal-cr-weaken-01',
@@ -209,7 +213,8 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'Asking for a feature is not the same as paying for a feature.',
     commonTrap: 'Choosing an answer that sounds negative but does not reduce the likelihood of higher profits.',
-    timeSavingInsight: 'Separate interest from willingness to pay.'
+    timeSavingInsight: 'Separate interest from willingness to pay.',
+    visual: null
   },
   {
     id: 'verbal-sc-grammar-01',
@@ -254,7 +259,8 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'Along with is a classic interrupter that hides the singular subject.',
     commonTrap: 'Matching the verb to the nearest plural noun instead of the actual subject.',
-    timeSavingInsight: 'Collapse the sentence to subject plus verb before comparing choices.'
+    timeSavingInsight: 'Collapse the sentence to subject plus verb before comparing choices.',
+    visual: null
   },
   {
     id: 'di-table-analysis-01',
@@ -293,7 +299,8 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'The challenge is selection, not math.',
     commonTrap: 'Adding the two values instead of taking their difference.',
-    timeSavingInsight: 'State the equation in words first, then fetch only those cells.'
+    timeSavingInsight: 'State the equation in words first, then fetch only those cells.',
+    visual: null
   },
   {
     id: 'di-graphics-interpretation-01',
@@ -332,7 +339,18 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'Relative change always anchors to the starting value.',
     commonTrap: 'Dividing by the new value instead of the original value.',
-    timeSavingInsight: 'In percent-change questions, say base out loud before dividing.'
+    timeSavingInsight: 'In percent-change questions, say base out loud before dividing.',
+    visual: {
+      type: 'bar_chart',
+      title: 'Revenue by year',
+      labels: ['Year 1', 'Year 2'],
+      datasets: [
+        {
+          label: 'Revenue ($M)',
+          data: [80, 92]
+        }
+      ]
+    }
   },
   {
     id: 'di-two-part-analysis-01',
@@ -371,6 +389,7 @@ export const GMAT_SEED_QUESTIONS: GmatQuestion[] = [
     ],
     topScorerNotice: 'This is a structure-recognition question, not an exhaustive search question.',
     commonTrap: 'Testing all options without noticing the fixed-sum optimization rule.',
-    timeSavingInsight: 'When sum is fixed and product is optimized, move to the midpoint immediately.'
+    timeSavingInsight: 'When sum is fixed and product is optimized, move to the midpoint immediately.',
+    visual: null
   }
 ];

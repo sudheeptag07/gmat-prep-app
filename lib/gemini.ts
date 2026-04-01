@@ -1,5 +1,5 @@
 import type { InterviewFeedback, NextRoundQuestion, Recommendation, RubricEntry } from '@/lib/types';
-import type { GmatQuestion, GmatTopic } from '@/lib/gmat-types';
+import type { GmatChartData, GmatQuestion, GmatTopic } from '@/lib/gmat-types';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 type CVAnalysis = {
@@ -145,6 +145,51 @@ function requiresMissingVisual(stem: string): boolean {
   return visualOnlyPatterns.some((pattern) => normalized.includes(pattern));
 }
 
+function stemNeedsStructuredVisual(stem: string): boolean {
+  const normalized = stem.toLowerCase();
+  return (
+    normalized.includes('chart') ||
+    normalized.includes('graph') ||
+    normalized.includes('bar chart') ||
+    normalized.includes('line graph') ||
+    normalized.includes('pie chart')
+  );
+}
+
+function normalizeChartData(value: unknown): GmatChartData | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const record = value as Record<string, unknown>;
+  const type = String(record.type ?? '').trim();
+  if (type !== 'bar_chart' && type !== 'line_chart' && type !== 'pie_chart') return null;
+
+  const labels = Array.isArray(record.labels)
+    ? record.labels.map((item) => String(item ?? '').trim()).filter(Boolean)
+    : [];
+  const datasets = Array.isArray(record.datasets)
+    ? record.datasets
+        .map((dataset) => {
+          const source = dataset as Record<string, unknown>;
+          return {
+            label: String(source.label ?? '').trim(),
+            data: Array.isArray(source.data)
+              ? source.data.map((point) => Number(point)).filter((point) => Number.isFinite(point))
+              : []
+          };
+        })
+        .filter((dataset) => dataset.label && dataset.data.length === labels.length)
+    : [];
+
+  if (labels.length === 0 || datasets.length === 0) return null;
+
+  return {
+    type,
+    title: String(record.title ?? '').trim() || undefined,
+    labels,
+    datasets
+  };
+}
+
 type GeneratedGmatQuestion = Omit<GmatQuestion, 'id'>;
 
 export async function generateGmatQuestions(input: {
@@ -185,7 +230,18 @@ Return strict JSON:
       ],
       "topScorerNotice": "string",
       "commonTrap": "string",
-      "timeSavingInsight": "string"
+      "timeSavingInsight": "string",
+      "visual": {
+        "type": "bar_chart|line_chart|pie_chart",
+        "title": "optional short title",
+        "labels": ["label 1", "label 2"],
+        "datasets": [
+          {
+            "label": "series name",
+            "data": [10, 20]
+          }
+        ]
+      } | null
     }
   ]
 }
@@ -196,7 +252,10 @@ Rules:
 - Subtopic must be "${input.subtopic}".
 - No markdown, no explanation.
 - Avoid ambiguous wording. One correct answer only.
-- If the question uses a chart, graph, table, or multi-source data, embed all needed data directly in the stem as plain text or ASCII-style rows so the question is fully solvable without an external visual.
+- If the question uses a chart or graph, include all data in the "visual" object.
+- The stem may mention the chart briefly, but the "visual" object is the source of truth for rendering.
+- For pie charts, use one dataset and let labels represent the slices.
+- If the question does not need a chart, set "visual" to null.
 - Do not refer to missing visuals with phrases like "graph above", "chart below", or "see the table".
 - Keep language concise and exam-like.`;
   let parsed: { questions?: Array<Record<string, unknown>> } = {};
@@ -266,13 +325,15 @@ Rules:
         alternativeMethods,
         topScorerNotice: String(row.topScorerNotice ?? '').trim(),
         commonTrap: String(row.commonTrap ?? '').trim(),
-        timeSavingInsight: String(row.timeSavingInsight ?? '').trim()
+        timeSavingInsight: String(row.timeSavingInsight ?? '').trim(),
+        visual: normalizeChartData(row.visual)
       };
 
       const hasMinimumFields =
         question.prompt &&
         question.stem.length >= 30 &&
         !requiresMissingVisual(question.stem) &&
+        (!stemNeedsStructuredVisual(question.stem) || question.visual !== null) &&
         question.choices.length === 5 &&
         question.standardSolution.length >= 3 &&
         question.concepts.length >= 1 &&

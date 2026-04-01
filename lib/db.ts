@@ -6,6 +6,7 @@ import type {
   EncouragementPayload,
   GmatAttempt,
   GmatAttemptWithQuestion,
+  GmatChartData,
   GmatLearner,
   GmatQuestion,
   GmatSubtopic,
@@ -138,7 +139,8 @@ export async function ensureSchema() {
         alternative_methods_json TEXT NOT NULL,
         top_scorer_notice TEXT NOT NULL,
         common_trap TEXT NOT NULL,
-        time_saving_insight TEXT NOT NULL
+        time_saving_insight TEXT NOT NULL,
+        visual_json TEXT
       )`,
       `CREATE TABLE IF NOT EXISTS gmat_attempts (
         id TEXT PRIMARY KEY,
@@ -249,6 +251,7 @@ async function ensureColumns() {
   const responseColumns = await db.execute('PRAGMA table_info(responses)');
   const webhookColumns = await db.execute('PRAGMA table_info(webhook_events)');
   const gmatAttemptColumns = await db.execute('PRAGMA table_info(gmat_attempts)');
+  const gmatQuestionColumns = await db.execute('PRAGMA table_info(gmat_questions)');
   const attemptColumns = await db.execute('PRAGMA table_info(attempts)');
 
   async function addColumnIfMissing(
@@ -324,7 +327,12 @@ async function ensureColumns() {
   }
 
   const gmatAttemptColumnNames = new Set(gmatAttemptColumns.rows.map((row) => String((row as Record<string, unknown>).name)));
+  const gmatQuestionColumnNames = new Set(gmatQuestionColumns.rows.map((row) => String((row as Record<string, unknown>).name)));
   const attemptColumnNames = new Set(attemptColumns.rows.map((row) => String((row as Record<string, unknown>).name)));
+
+  if (!gmatQuestionColumnNames.has('visual_json')) {
+    await db.execute('ALTER TABLE gmat_questions ADD COLUMN visual_json TEXT');
+  }
 
   if (gmatAttemptColumnNames.has('strategy_used')) {
     await db.execute('ALTER TABLE gmat_attempts DROP COLUMN strategy_used');
@@ -370,6 +378,18 @@ async function ensureColumns() {
         OR LOWER(stem) LIKE '%shown below%'
         OR LOWER(stem) LIKE '%displayed below%'`
   );
+
+  await db.execute(
+    `DELETE FROM gmat_questions
+     WHERE visual_json IS NULL
+       AND (
+         LOWER(stem) LIKE '%chart%'
+         OR LOWER(stem) LIKE '%graph%'
+         OR LOWER(stem) LIKE '%pie chart%'
+         OR LOWER(stem) LIKE '%bar chart%'
+         OR LOWER(stem) LIKE '%line graph%'
+       )`
+  );
 }
 
 async function seedGmatQuestions() {
@@ -378,8 +398,8 @@ async function seedGmatQuestions() {
       sql: `INSERT INTO gmat_questions (
         id, topic, subtopic, difficulty, prompt, stem, choices_json, correct_answer,
         recommended_time_seconds, concepts_json, strategy_tags_json, trap_type, pattern_type,
-        standard_solution_json, alternative_methods_json, top_scorer_notice, common_trap, time_saving_insight
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        standard_solution_json, alternative_methods_json, top_scorer_notice, common_trap, time_saving_insight, visual_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         topic = excluded.topic,
         subtopic = excluded.subtopic,
@@ -397,7 +417,8 @@ async function seedGmatQuestions() {
         alternative_methods_json = excluded.alternative_methods_json,
         top_scorer_notice = excluded.top_scorer_notice,
         common_trap = excluded.common_trap,
-        time_saving_insight = excluded.time_saving_insight`,
+        time_saving_insight = excluded.time_saving_insight,
+        visual_json = excluded.visual_json`,
       args: [
         question.id,
         question.topic,
@@ -416,7 +437,8 @@ async function seedGmatQuestions() {
         JSON.stringify(question.alternativeMethods),
         question.topScorerNotice,
         question.commonTrap,
-        question.timeSavingInsight
+        question.timeSavingInsight,
+        question.visual ? JSON.stringify(question.visual) : null
       ]
     })),
     'write'
@@ -466,6 +488,41 @@ function parseJsonArray<T>(value: string | null | undefined): T[] {
   }
 }
 
+function parseChartData(value: string | null | undefined): GmatChartData | null {
+  if (!value) return null;
+
+  try {
+    const parsed = JSON.parse(value) as Partial<GmatChartData> | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.type !== 'bar_chart' && parsed.type !== 'line_chart' && parsed.type !== 'pie_chart') return null;
+    if (!Array.isArray(parsed.labels) || parsed.labels.length === 0) return null;
+    if (!Array.isArray(parsed.datasets) || parsed.datasets.length === 0) return null;
+
+    const labels = parsed.labels.map((item) => String(item ?? '').trim()).filter(Boolean);
+    const datasets = parsed.datasets
+      .map((dataset) => ({
+        label: String(dataset?.label ?? '').trim(),
+        data: Array.isArray(dataset?.data)
+          ? dataset.data
+              .map((point) => Number(point))
+              .filter((point) => Number.isFinite(point))
+          : []
+      }))
+      .filter((dataset) => dataset.label && dataset.data.length === labels.length);
+
+    if (labels.length === 0 || datasets.length === 0) return null;
+
+    return {
+      type: parsed.type,
+      title: String(parsed.title ?? '').trim() || undefined,
+      labels,
+      datasets
+    };
+  } catch {
+    return null;
+  }
+}
+
 function mapGmatQuestion(row: Record<string, unknown>): GmatQuestion {
   return {
     id: String(row.id),
@@ -487,7 +544,8 @@ function mapGmatQuestion(row: Record<string, unknown>): GmatQuestion {
     ),
     topScorerNotice: String(row.top_scorer_notice),
     commonTrap: String(row.common_trap),
-    timeSavingInsight: String(row.time_saving_insight)
+    timeSavingInsight: String(row.time_saving_insight),
+    visual: parseChartData((row.visual_json as string | null) ?? null)
   };
 }
 
@@ -1324,8 +1382,8 @@ export async function generateAndStoreGmatQuestions(input: {
       sql: `INSERT OR IGNORE INTO gmat_questions (
           id, topic, subtopic, difficulty, prompt, stem, choices_json, correct_answer,
           recommended_time_seconds, concepts_json, strategy_tags_json, trap_type, pattern_type,
-          standard_solution_json, alternative_methods_json, top_scorer_notice, common_trap, time_saving_insight
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          standard_solution_json, alternative_methods_json, top_scorer_notice, common_trap, time_saving_insight, visual_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         `llm-${topicPart}-${subtopicPart}-${createdBase}-${index}-${uuidv4().slice(0, 8)}`,
         question.topic,
@@ -1344,7 +1402,8 @@ export async function generateAndStoreGmatQuestions(input: {
         JSON.stringify(question.alternativeMethods),
         question.topScorerNotice,
         question.commonTrap,
-        question.timeSavingInsight
+        question.timeSavingInsight,
+        question.visual ? JSON.stringify(question.visual) : null
       ]
     })),
     'write'
@@ -1816,7 +1875,8 @@ export async function listGmatAttemptsForUser(userId: string, filter?: 'incorrec
             q.alternative_methods_json,
             q.top_scorer_notice,
             q.common_trap,
-            q.time_saving_insight
+            q.time_saving_insight,
+            q.visual_json
           FROM gmat_attempts a
           JOIN gmat_questions q ON q.id = a.question_id
           WHERE ${where.join(' AND ')}
@@ -1844,7 +1904,8 @@ export async function listGmatAttemptsForUser(userId: string, filter?: 'incorrec
       alternative_methods_json: record.alternative_methods_json,
       top_scorer_notice: record.top_scorer_notice,
       common_trap: record.common_trap,
-      time_saving_insight: record.time_saving_insight
+      time_saving_insight: record.time_saving_insight,
+      visual_json: record.visual_json
     });
 
     return {
