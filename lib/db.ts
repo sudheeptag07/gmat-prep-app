@@ -6,11 +6,11 @@ import type {
   EncouragementPayload,
   GmatAttempt,
   GmatAttemptWithQuestion,
-  GmatChartData,
   GmatLearner,
   GmatQuestion,
   GmatSubtopic,
-  GmatTopic
+  GmatTopic,
+  GmatVisualData
 } from '@/lib/gmat-types';
 import { selectEncouragement } from '@/lib/select-encouragement';
 import type { EncouragementDerivedFlags } from '@/lib/select-encouragement';
@@ -500,12 +500,31 @@ function parseJsonArray<T>(value: string | null | undefined): T[] {
   }
 }
 
-function parseChartData(value: string | null | undefined): GmatChartData | null {
+function parseVisualData(value: string | null | undefined): GmatVisualData | null {
   if (!value) return null;
 
   try {
-    const parsed = JSON.parse(value) as Partial<GmatChartData> | null;
+    const parsed = JSON.parse(value) as Partial<GmatVisualData> | null;
     if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed.type === 'table') {
+      const columns = Array.isArray(parsed.columns)
+        ? parsed.columns.map((item) => String(item ?? '').trim()).filter(Boolean)
+        : [];
+      const rows = Array.isArray(parsed.rows)
+        ? parsed.rows
+            .map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? '').trim()) : []))
+            .filter((row) => row.length === columns.length && row.some(Boolean))
+        : [];
+      return columns.length > 0 && rows.length > 0
+        ? {
+            type: 'table',
+            title: String(parsed.title ?? '').trim() || undefined,
+            columns,
+            rows
+          }
+        : null;
+    }
+
     if (parsed.type !== 'bar_chart' && parsed.type !== 'line_chart' && parsed.type !== 'pie_chart') return null;
     if (!Array.isArray(parsed.labels) || parsed.labels.length === 0) return null;
     if (!Array.isArray(parsed.datasets) || parsed.datasets.length === 0) return null;
@@ -522,17 +541,55 @@ function parseChartData(value: string | null | undefined): GmatChartData | null 
       }))
       .filter((dataset) => dataset.label && dataset.data.length === labels.length);
 
-    if (labels.length === 0 || datasets.length === 0) return null;
-
-    return {
-      type: parsed.type,
-      title: String(parsed.title ?? '').trim() || undefined,
-      labels,
-      datasets
-    };
+    return labels.length > 0 && datasets.length > 0
+      ? {
+          type: parsed.type,
+          title: String(parsed.title ?? '').trim() || undefined,
+          labels,
+          datasets
+        }
+      : null;
   } catch {
     return null;
   }
+}
+
+function parsePipeTableVisualFromStem(question: Pick<GmatQuestion, 'prompt' | 'stem'>): GmatVisualData | null {
+  const lines = question.stem
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const pipeLines = lines.filter((line) => line.includes('|'));
+
+  if (pipeLines.length < 2) return null;
+
+  const cleaned = pipeLines
+    .filter((line) => !/^\|?[-:\s|]+\|?$/.test(line))
+    .map((line) =>
+      line
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((cell) => cell.replace(/\*\*/g, '').trim())
+    )
+    .filter((row) => row.length >= 2);
+
+  if (cleaned.length < 2) return null;
+
+  const columns = cleaned[0];
+  const rows = cleaned
+    .slice(1)
+    .map((row) => (row.length === columns.length ? row : row.slice(0, columns.length)))
+    .filter((row) => row.length === columns.length);
+
+  if (columns.length < 2 || rows.length === 0) return null;
+
+  return {
+    type: 'table',
+    title: question.prompt,
+    columns,
+    rows
+  };
 }
 
 function mapGmatQuestion(row: Record<string, unknown>): GmatQuestion {
@@ -557,7 +614,7 @@ function mapGmatQuestion(row: Record<string, unknown>): GmatQuestion {
     topScorerNotice: String(row.top_scorer_notice),
     commonTrap: String(row.common_trap),
     timeSavingInsight: String(row.time_saving_insight),
-    visual: parseChartData((row.visual_json as string | null) ?? null)
+    visual: parseVisualData((row.visual_json as string | null) ?? null)
   };
 }
 
@@ -567,6 +624,8 @@ function needsQuestionVisualBackfill(question: Pick<GmatQuestion, 'topic' | 'sub
   return (
     text.includes('chart') ||
     text.includes('graph') ||
+    text.includes('table') ||
+    text.includes('table analysis') ||
     text.includes('graphic interpretation') ||
     text.includes('bar chart') ||
     text.includes('line graph') ||
@@ -578,6 +637,9 @@ function requiresRenderableVisual(question: Pick<GmatQuestion, 'topic' | 'subtop
   const text = `${question.topic} ${question.subtopic} ${question.prompt} ${question.stem}`.toLowerCase();
   return (
     Boolean(question.visual) ||
+    text.includes('table analysis') ||
+    text.includes('table reading') ||
+    text.includes(' table ') ||
     text.includes('graphic interpretation') ||
     text.includes('chart and graph analysis') ||
     text.includes('bar chart') ||
@@ -592,6 +654,21 @@ function requiresRenderableVisual(question: Pick<GmatQuestion, 'topic' | 'subtop
 async function backfillVisualForQuestion(question: GmatQuestion): Promise<GmatQuestion> {
   if (!needsQuestionVisualBackfill(question)) {
     return question;
+  }
+
+  const parsedTable = parsePipeTableVisualFromStem(question);
+  if (parsedTable) {
+    await db.execute({
+      sql: `UPDATE gmat_questions
+            SET visual_json = ?
+            WHERE id = ?`,
+      args: [JSON.stringify(parsedTable), question.id]
+    });
+
+    return {
+      ...question,
+      visual: parsedTable
+    };
   }
 
   const visual = await generateGmatVisual({
@@ -1796,8 +1873,12 @@ export async function backfillMissingQuestionVisuals(limit = 100): Promise<{ sca
             AND (
               LOWER(prompt) LIKE '%chart%'
               OR LOWER(prompt) LIKE '%graph%'
+              OR LOWER(prompt) LIKE '%table%'
               OR LOWER(stem) LIKE '%chart%'
               OR LOWER(stem) LIKE '%graph%'
+              OR LOWER(stem) LIKE '%table%'
+              OR LOWER(subtopic) LIKE '%table analysis%'
+              OR LOWER(subtopic) LIKE '%table reading%'
               OR LOWER(subtopic) LIKE '%graphic interpretation%'
               OR LOWER(subtopic) LIKE '%bar charts%'
               OR LOWER(subtopic) LIKE '%line graphs%'

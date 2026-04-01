@@ -1,5 +1,5 @@
 import type { InterviewFeedback, NextRoundQuestion, Recommendation, RubricEntry } from '@/lib/types';
-import type { GmatChartData, GmatQuestion, GmatTopic } from '@/lib/gmat-types';
+import type { GmatChartData, GmatQuestion, GmatTableData, GmatTopic, GmatVisualData } from '@/lib/gmat-types';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 type CVAnalysis = {
@@ -150,6 +150,7 @@ function stemNeedsStructuredVisual(stem: string): boolean {
   return (
     normalized.includes('chart') ||
     normalized.includes('graph') ||
+    normalized.includes('table') ||
     normalized.includes('bar chart') ||
     normalized.includes('line graph') ||
     normalized.includes('pie chart')
@@ -167,6 +168,9 @@ function questionNeedsStructuredVisual(input: {
     stemNeedsStructuredVisual(input.stem) ||
     context.includes('graphic interpretation') ||
     context.includes('chart and graph analysis') ||
+    context.includes('table analysis') ||
+    context.includes('table reading') ||
+    context.includes('tables') ||
     context.includes('bar charts') ||
     context.includes('line graphs') ||
     context.includes('pie charts') ||
@@ -180,15 +184,40 @@ function sanitizeStemForVisual(stem: string, hasVisual: boolean): string {
   return stem
     .replace(/\[\s*imagine[^\]]*\]/gi, '')
     .replace(/imagine\s+a\s+(?:bar chart|line graph|pie chart|chart|graph)[\s\S]*?(?=\n\n|What|Which|How|If|According|$)/gi, '')
+    .replace(/(?:^|\n)\|[^\n]*\|(?:\n\|[^\n]*\|)+/g, '')
+    .replace(/(?:^|\n)\|[-:\s|]+\|(?:\n\|[-:\s|]+\|)*/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
-function normalizeChartData(value: unknown): GmatChartData | null {
+function normalizeVisualData(value: unknown): GmatVisualData | null {
   if (!value || typeof value !== 'object') return null;
 
   const record = value as Record<string, unknown>;
   const type = String(record.type ?? '').trim();
+  if (type === 'table') {
+    const columns = Array.isArray(record.columns)
+      ? record.columns.map((item) => String(item ?? '').trim()).filter(Boolean)
+      : [];
+    const rows = Array.isArray(record.rows)
+      ? record.rows
+          .map((row) =>
+            Array.isArray(row) ? row.map((cell) => String(cell ?? '').trim()) : []
+          )
+          .filter((row) => row.length === columns.length && row.some(Boolean))
+      : [];
+
+    if (columns.length === 0 || rows.length === 0) return null;
+
+    const table: GmatTableData = {
+      type: 'table',
+      title: String(record.title ?? '').trim() || undefined,
+      columns,
+      rows
+    };
+    return table;
+  }
+
   if (type !== 'bar_chart' && type !== 'line_chart' && type !== 'pie_chart') return null;
 
   const labels = Array.isArray(record.labels)
@@ -210,15 +239,19 @@ function normalizeChartData(value: unknown): GmatChartData | null {
 
   if (labels.length === 0 || datasets.length === 0) return null;
 
-  return {
+  const chart: GmatChartData = {
     type,
     title: String(record.title ?? '').trim() || undefined,
     labels,
     datasets
   };
+  return chart;
 }
 
-function hasChartNumbers(visual: GmatChartData): boolean {
+function hasRenderableVisualData(visual: GmatVisualData): boolean {
+  if (visual.type === 'table') {
+    return visual.columns.length > 0 && visual.rows.length > 0;
+  }
   return visual.datasets.some((dataset) => dataset.data.some((point) => Number.isFinite(point)));
 }
 
@@ -228,7 +261,7 @@ export async function generateGmatVisual(input: {
   prompt: string;
   stem: string;
   choices: string[];
-}): Promise<GmatChartData | null> {
+}): Promise<GmatVisualData | null> {
   if (!questionNeedsStructuredVisual(input)) return null;
 
   const prompt = `You convert GMAT chart-based questions into structured visual JSON.
@@ -236,7 +269,7 @@ export async function generateGmatVisual(input: {
 Return strict JSON only:
 {
   "visual": {
-    "type": "bar_chart|line_chart|pie_chart",
+    "type": "bar_chart|line_chart|pie_chart|table",
     "title": "short title",
     "labels": ["label 1", "label 2"],
     "datasets": [
@@ -244,17 +277,21 @@ Return strict JSON only:
         "label": "series name",
         "data": [10, 20]
       }
-    ]
+    ],
+    "columns": ["column 1", "column 2"],
+    "rows": [["value 1", "value 2"]]
   }
 }
 
 Rules:
-- Infer the chart only from the question content below.
+- Infer the visual only from the question content below.
 - Use "line_chart" for trend-over-time or ordered sequences.
 - Use "bar_chart" for category comparisons.
 - Use "pie_chart" only for proportional slice questions.
+- Use "table" for table-analysis prompts or any prompt whose source data is row/column based.
 - For pie charts, return exactly one dataset.
 - Every dataset length must exactly match labels length.
+- For tables, every row length must exactly match columns length.
 - Do not return null, prose, markdown, or explanation.
 
 Topic: ${input.topic}
@@ -269,8 +306,8 @@ ${input.choices.join('\n')}`;
   try {
     const result = await generateWithFallback(prompt);
     const parsed = parseJsonLoose(result.response.text()) as { visual?: unknown };
-    const visual = normalizeChartData(parsed.visual);
-    return visual && hasChartNumbers(visual) ? visual : null;
+    const visual = normalizeVisualData(parsed.visual);
+    return visual && hasRenderableVisualData(visual) ? visual : null;
   } catch {
     return null;
   }
@@ -318,7 +355,7 @@ Return strict JSON:
       "commonTrap": "string",
       "timeSavingInsight": "string",
       "visual": {
-        "type": "bar_chart|line_chart|pie_chart",
+        "type": "bar_chart|line_chart|pie_chart|table",
         "title": "optional short title",
         "labels": ["label 1", "label 2"],
         "datasets": [
@@ -326,7 +363,9 @@ Return strict JSON:
             "label": "series name",
             "data": [10, 20]
           }
-        ]
+        ],
+        "columns": ["column 1", "column 2"],
+        "rows": [["value 1", "value 2"]]
       } | null
     }
   ]
@@ -338,8 +377,9 @@ Rules:
 - Subtopic must be "${input.subtopic}".
 - No markdown, no explanation.
 - Avoid ambiguous wording. One correct answer only.
-- If the question uses a chart or graph, include all data in the "visual" object.
+- If the question uses a chart, graph, or table, include all data in the "visual" object.
 - The stem may mention the chart briefly, but the "visual" object is the source of truth for rendering.
+- For table-analysis questions, prefer "visual.type" = "table".
 - Do not include placeholder text like "[Imagine a chart...]" or repeat the full chart data inside the stem when "visual" is present.
 - For pie charts, use one dataset and let labels represent the slices.
 - If the question does not need a chart, set "visual" to null.
@@ -396,7 +436,7 @@ Rules:
 
       const recommendedTimeSeconds = Math.max(75, Math.min(180, Math.round(Number(row.recommendedTimeSeconds ?? 120))));
 
-      let visual = normalizeChartData(row.visual);
+      let visual = normalizeVisualData(row.visual);
       const visualRequired = questionNeedsStructuredVisual({
         topic: input.topic,
         subtopic: input.subtopic,
@@ -442,7 +482,7 @@ Rules:
         question.stem.length >= 30 &&
         !requiresMissingVisual(question.stem) &&
         (!visualRequired || question.visual !== null) &&
-        (!question.visual || hasChartNumbers(question.visual)) &&
+        (!question.visual || hasRenderableVisualData(question.visual)) &&
         question.choices.length === 5 &&
         question.standardSolution.length >= 3 &&
         question.concepts.length >= 1 &&

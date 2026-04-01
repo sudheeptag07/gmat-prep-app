@@ -31,11 +31,19 @@ export function GmatAttemptCard({
 }) {
   const displayStem = useMemo(() => {
     if (!question.visual) return question.stem;
-    return question.stem
+    let nextStem = question.stem
       .replace(/\[\s*imagine[^\]]*\]/gi, '')
       .replace(/imagine\s+a\s+(?:bar chart|line graph|pie chart|chart|graph)[\s\S]*?(?=\n\n|What|Which|How|If|According|$)/gi, '')
-      .replace(/\n{3,}/g, '\n\n')
       .trim();
+
+    if (question.visual.type === 'table') {
+      nextStem = nextStem
+        .replace(/(?:^|\n)\|[^\n]*\|(?:\n\|[^\n]*\|)+/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+
+    return nextStem.replace(/\n{3,}/g, '\n\n').trim();
   }, [question.stem, question.visual]);
   const hasVisualReference =
     Boolean(question.visual) || /chart|graph|plot|pie chart|bar chart|line graph/i.test(question.stem);

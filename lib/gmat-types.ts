@@ -6,6 +6,7 @@ export type GmatSpeedLabel = 'Fast' | 'Medium' | 'Slow';
 export type GmatReliabilityLabel = 'High' | 'Medium';
 export type GmatCognitiveLoad = 'Low' | 'Medium' | 'High';
 export type GmatChartType = 'bar_chart' | 'line_chart' | 'pie_chart';
+export type GmatVisualType = GmatChartType | 'table';
 export type EncouragementTriggerType =
   | 'correct'
   | 'fast_correct'
@@ -42,6 +43,15 @@ export type GmatChartData = {
   datasets: GmatChartDataset[];
 };
 
+export type GmatTableData = {
+  type: 'table';
+  title?: string;
+  columns: string[];
+  rows: string[][];
+};
+
+export type GmatVisualData = GmatChartData | GmatTableData;
+
 export type GmatQuestion = {
   id: string;
   topic: GmatTopic;
@@ -61,7 +71,7 @@ export type GmatQuestion = {
   topScorerNotice: string;
   commonTrap: string;
   timeSavingInsight: string;
-  visual: GmatChartData | null;
+  visual: GmatVisualData | null;
 };
 
 export type GmatLearner = {
