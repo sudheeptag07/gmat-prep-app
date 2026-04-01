@@ -2,9 +2,21 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import type { GmatAttempt, GmatAttemptWithQuestion, GmatQuestion } from '@/lib/gmat-types';
 import { EncouragementLine } from '@/components/encouragement-line';
-import { ChartRenderer } from '@/components/chart-renderer';
+
+const ChartRenderer = dynamic(
+  () => import('@/components/chart-renderer').then((module) => module.ChartRenderer),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] px-5 py-4 text-sm text-slate-300">
+        Loading visual...
+      </div>
+    )
+  }
+);
 
 export function GmatAttemptCard({
   question,
