@@ -14,7 +14,7 @@ import type {
 } from '@/lib/gmat-types';
 import { selectEncouragement } from '@/lib/select-encouragement';
 import type { EncouragementDerivedFlags } from '@/lib/select-encouragement';
-import { generateGmatQuestions } from '@/lib/gemini';
+import { generateGmatQuestions, generateGmatVisual } from '@/lib/gemini';
 import { getTopicCatalog } from '@/lib/gmat-taxonomy';
 import { buildAssessmentRecord } from '@/lib/expense-health';
 import type { AssessmentRecord, AssessmentSubmission } from '@/lib/expense-types';
@@ -558,6 +558,49 @@ function mapGmatQuestion(row: Record<string, unknown>): GmatQuestion {
     commonTrap: String(row.common_trap),
     timeSavingInsight: String(row.time_saving_insight),
     visual: parseChartData((row.visual_json as string | null) ?? null)
+  };
+}
+
+function needsQuestionVisualBackfill(question: Pick<GmatQuestion, 'topic' | 'subtopic' | 'prompt' | 'stem' | 'visual'>): boolean {
+  if (question.visual) return false;
+  const text = `${question.prompt} ${question.stem} ${question.subtopic}`.toLowerCase();
+  return (
+    text.includes('chart') ||
+    text.includes('graph') ||
+    text.includes('graphic interpretation') ||
+    text.includes('bar chart') ||
+    text.includes('line graph') ||
+    text.includes('pie chart')
+  );
+}
+
+async function backfillVisualForQuestion(question: GmatQuestion): Promise<GmatQuestion> {
+  if (!needsQuestionVisualBackfill(question)) {
+    return question;
+  }
+
+  const visual = await generateGmatVisual({
+    topic: question.topic,
+    subtopic: question.subtopic,
+    prompt: question.prompt,
+    stem: question.stem,
+    choices: question.choices
+  });
+
+  if (!visual) {
+    return question;
+  }
+
+  await db.execute({
+    sql: `UPDATE gmat_questions
+          SET visual_json = ?
+          WHERE id = ?`,
+    args: [JSON.stringify(visual), question.id]
+  });
+
+  return {
+    ...question,
+    visual
   };
 }
 
@@ -1588,7 +1631,7 @@ export async function getNextGmatQuestionForUser(
     });
     const subtopicRow = subtopicResult.rows[0] as Record<string, unknown> | undefined;
     if (subtopicRow) {
-      return mapGmatQuestion(subtopicRow);
+      return backfillVisualForQuestion(mapGmatQuestion(subtopicRow));
     }
 
     if (allowGeneration && isValidGmatTopic(topic)) {
@@ -1616,7 +1659,7 @@ export async function getNextGmatQuestionForUser(
       });
       const regeneratedRow = regeneratedResult.rows[0] as Record<string, unknown> | undefined;
       if (regeneratedRow) {
-        return mapGmatQuestion(regeneratedRow);
+        return backfillVisualForQuestion(mapGmatQuestion(regeneratedRow));
       }
     }
   }
@@ -1647,7 +1690,7 @@ export async function getNextGmatQuestionForUser(
     });
     const topicRow = topicResult.rows[0] as Record<string, unknown> | undefined;
     if (topicRow) {
-      return mapGmatQuestion(topicRow);
+      return backfillVisualForQuestion(mapGmatQuestion(topicRow));
     }
   }
 
@@ -1669,7 +1712,7 @@ export async function getNextGmatQuestionForUser(
     args: fallbackArgs
   });
   const fallbackRow = fallbackResult.rows[0] as Record<string, unknown> | undefined;
-  return fallbackRow ? mapGmatQuestion(fallbackRow) : null;
+  return fallbackRow ? backfillVisualForQuestion(mapGmatQuestion(fallbackRow)) : null;
 }
 
 export async function getNextGmatQuestionForUserInSubtopics(input: {
@@ -1709,7 +1752,41 @@ export async function getNextGmatQuestionForUserInSubtopics(input: {
     args
   });
   const row = result.rows[0] as Record<string, unknown> | undefined;
-  return row ? mapGmatQuestion(row) : null;
+  return row ? backfillVisualForQuestion(mapGmatQuestion(row)) : null;
+}
+
+export async function backfillMissingQuestionVisuals(limit = 100): Promise<{ scanned: number; updated: number }> {
+  await ensureSchema();
+  const safeLimit = Math.max(1, Math.min(500, Math.round(limit)));
+  const result = await db.execute({
+    sql: `SELECT *
+          FROM gmat_questions
+          WHERE visual_json IS NULL
+            AND (
+              LOWER(prompt) LIKE '%chart%'
+              OR LOWER(prompt) LIKE '%graph%'
+              OR LOWER(stem) LIKE '%chart%'
+              OR LOWER(stem) LIKE '%graph%'
+              OR LOWER(subtopic) LIKE '%graphic interpretation%'
+              OR LOWER(subtopic) LIKE '%bar charts%'
+              OR LOWER(subtopic) LIKE '%line graphs%'
+              OR LOWER(subtopic) LIKE '%pie charts%'
+            )
+          ORDER BY rowid DESC
+          LIMIT ?`,
+    args: [safeLimit]
+  });
+
+  let updated = 0;
+  for (const row of result.rows) {
+    const question = mapGmatQuestion(row as Record<string, unknown>);
+    const next = await backfillVisualForQuestion(question);
+    if (next.visual && !question.visual) {
+      updated += 1;
+    }
+  }
+
+  return { scanned: result.rows.length, updated };
 }
 
 export async function createGmatAttempt(input: {

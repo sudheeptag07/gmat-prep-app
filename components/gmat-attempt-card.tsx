@@ -29,6 +29,14 @@ export function GmatAttemptCard({
     groupSubtopics?: string[];
   };
 }) {
+  const displayStem = useMemo(() => {
+    if (!question.visual) return question.stem;
+    return question.stem
+      .replace(/\[\s*imagine[^\]]*\]/gi, '')
+      .replace(/imagine\s+a\s+(?:bar chart|line graph|pie chart|chart|graph)[\s\S]*?(?=\n\n|What|Which|How|If|According|$)/gi, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }, [question.stem, question.visual]);
   const hasVisualReference =
     Boolean(question.visual) || /chart|graph|plot|pie chart|bar chart|line graph/i.test(question.stem);
   const [startedAt] = useState(() => Date.now());
@@ -297,7 +305,7 @@ export function GmatAttemptCard({
           </div>
         </div>
         <p className="mt-4 text-sm text-slate-400">Recommended pace: {question.recommendedTimeSeconds}s • {timingLabel}</p>
-        <p className="mt-8 text-lg leading-8 text-slate-100">{question.stem}</p>
+        <p className="mt-8 text-lg leading-8 text-slate-100 whitespace-pre-line">{displayStem}</p>
       </div>
 
       {hasVisualReference ? <ChartRenderer type={question.visual?.type ?? 'bar_chart'} data={question.visual} /> : null}

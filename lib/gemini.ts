@@ -156,6 +156,16 @@ function stemNeedsStructuredVisual(stem: string): boolean {
   );
 }
 
+function sanitizeStemForVisual(stem: string, hasVisual: boolean): string {
+  if (!hasVisual) return stem.trim();
+
+  return stem
+    .replace(/\[\s*imagine[^\]]*\]/gi, '')
+    .replace(/imagine\s+a\s+(?:bar chart|line graph|pie chart|chart|graph)[\s\S]*?(?=\n\n|What|Which|How|If|According|$)/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function normalizeChartData(value: unknown): GmatChartData | null {
   if (!value || typeof value !== 'object') return null;
 
@@ -188,6 +198,64 @@ function normalizeChartData(value: unknown): GmatChartData | null {
     labels,
     datasets
   };
+}
+
+function hasChartNumbers(visual: GmatChartData): boolean {
+  return visual.datasets.some((dataset) => dataset.data.some((point) => Number.isFinite(point)));
+}
+
+export async function generateGmatVisual(input: {
+  topic: GmatTopic;
+  subtopic: string;
+  prompt: string;
+  stem: string;
+  choices: string[];
+}): Promise<GmatChartData | null> {
+  if (!stemNeedsStructuredVisual(input.stem)) return null;
+
+  const prompt = `You convert GMAT chart-based questions into structured visual JSON.
+
+Return strict JSON only:
+{
+  "visual": {
+    "type": "bar_chart|line_chart|pie_chart",
+    "title": "short title",
+    "labels": ["label 1", "label 2"],
+    "datasets": [
+      {
+        "label": "series name",
+        "data": [10, 20]
+      }
+    ]
+  }
+}
+
+Rules:
+- Infer the chart only from the question content below.
+- Use "line_chart" for trend-over-time or ordered sequences.
+- Use "bar_chart" for category comparisons.
+- Use "pie_chart" only for proportional slice questions.
+- For pie charts, return exactly one dataset.
+- Every dataset length must exactly match labels length.
+- Do not return null, prose, markdown, or explanation.
+
+Topic: ${input.topic}
+Subtopic: ${input.subtopic}
+Prompt: ${input.prompt}
+Stem:
+${input.stem}
+
+Choices:
+${input.choices.join('\n')}`;
+
+  try {
+    const result = await generateWithFallback(prompt);
+    const parsed = parseJsonLoose(result.response.text()) as { visual?: unknown };
+    const visual = normalizeChartData(parsed.visual);
+    return visual && hasChartNumbers(visual) ? visual : null;
+  } catch {
+    return null;
+  }
 }
 
 type GeneratedGmatQuestion = Omit<GmatQuestion, 'id'>;
@@ -254,6 +322,7 @@ Rules:
 - Avoid ambiguous wording. One correct answer only.
 - If the question uses a chart or graph, include all data in the "visual" object.
 - The stem may mention the chart briefly, but the "visual" object is the source of truth for rendering.
+- Do not include placeholder text like "[Imagine a chart...]" or repeat the full chart data inside the stem when "visual" is present.
 - For pie charts, use one dataset and let labels represent the slices.
 - If the question does not need a chart, set "visual" to null.
 - Do not refer to missing visuals with phrases like "graph above", "chart below", or "see the table".
@@ -308,12 +377,13 @@ Rules:
 
       const recommendedTimeSeconds = Math.max(75, Math.min(180, Math.round(Number(row.recommendedTimeSeconds ?? 120))));
 
+      const visual = normalizeChartData(row.visual);
       const question: GeneratedGmatQuestion = {
         topic: input.topic,
         subtopic: input.subtopic,
         difficulty: difficulty as GmatQuestion['difficulty'],
         prompt: String(row.prompt ?? '').trim(),
-        stem: String(row.stem ?? '').trim(),
+        stem: sanitizeStemForVisual(String(row.stem ?? '').trim(), visual !== null),
         choices,
         correctAnswer,
         recommendedTimeSeconds,
@@ -326,7 +396,7 @@ Rules:
         topScorerNotice: String(row.topScorerNotice ?? '').trim(),
         commonTrap: String(row.commonTrap ?? '').trim(),
         timeSavingInsight: String(row.timeSavingInsight ?? '').trim(),
-        visual: normalizeChartData(row.visual)
+        visual
       };
 
       const hasMinimumFields =
@@ -334,6 +404,7 @@ Rules:
         question.stem.length >= 30 &&
         !requiresMissingVisual(question.stem) &&
         (!stemNeedsStructuredVisual(question.stem) || question.visual !== null) &&
+        (!question.visual || hasChartNumbers(question.visual)) &&
         question.choices.length === 5 &&
         question.standardSolution.length >= 3 &&
         question.concepts.length >= 1 &&
