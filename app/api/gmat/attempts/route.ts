@@ -2,13 +2,17 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import { createGmatAttempt, ensureGmatLearner } from '@/lib/db';
+import { createGmatAttempt, deleteGmatAttemptForUser, ensureGmatLearner } from '@/lib/db';
 import { GMAT_USER_COOKIE } from '@/lib/gmat-session';
 
 const payloadSchema = z.object({
   questionId: z.string().min(1),
   selectedAnswer: z.string().min(1),
   timeTakenSeconds: z.number().int().min(1)
+});
+
+const deletePayloadSchema = z.object({
+  attemptId: z.string().min(1)
 });
 
 export async function POST(request: Request) {
@@ -40,4 +44,17 @@ export async function POST(request: Request) {
     });
   }
   return response;
+}
+
+export async function DELETE(request: Request) {
+  const userId = cookies().get(GMAT_USER_COOKIE)?.value;
+  if (!userId) {
+    return NextResponse.json({ error: 'No learner session found.' }, { status: 401 });
+  }
+
+  const json = await request.json();
+  const payload = deletePayloadSchema.parse(json);
+  const deleted = await deleteGmatAttemptForUser(userId, payload.attemptId);
+
+  return NextResponse.json({ ok: deleted, deleted });
 }

@@ -8,6 +8,7 @@ import type {
   GmatAttemptWithQuestion,
   GmatLearner,
   GmatQuestion,
+  GmatReviewStats,
   GmatSubtopic,
   GmatTopic,
   GmatVisualData
@@ -2114,4 +2115,78 @@ export async function listGmatAttemptsForUser(userId: string, filter?: 'incorrec
       question
     } satisfies GmatAttemptWithQuestion;
   });
+}
+
+export async function getGmatReviewStats(userId: string): Promise<GmatReviewStats> {
+  await ensureSchema();
+  const [summaryResult, topicResult] = await db.batch(
+    [
+      {
+        sql: `SELECT
+                COUNT(*) AS total_attempts,
+                COALESCE(SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct_attempts,
+                COALESCE(AVG(a.time_taken_seconds), 0) AS avg_time_seconds,
+                COALESCE(AVG(q.recommended_time_seconds), 0) AS avg_target_seconds,
+                COALESCE(SUM(CASE WHEN a.time_taken_seconds > q.recommended_time_seconds THEN 1 ELSE 0 END), 0) AS slow_attempts
+              FROM gmat_attempts a
+              JOIN gmat_questions q ON q.id = a.question_id
+              WHERE a.user_id = ?`,
+        args: [userId]
+      },
+      {
+        sql: `SELECT q.topic, COUNT(*) AS count
+              FROM gmat_attempts a
+              JOIN gmat_questions q ON q.id = a.question_id
+              WHERE a.user_id = ?
+              GROUP BY q.topic
+              ORDER BY count DESC, q.topic ASC
+              LIMIT 1`,
+        args: [userId]
+      }
+    ],
+    'read'
+  );
+
+  const summary = (summaryResult?.rows?.[0] ?? {}) as Record<string, unknown>;
+  const totalAttempts = Number(summary.total_attempts ?? 0);
+  const correctAttempts = Number(summary.correct_attempts ?? 0);
+
+  return {
+    totalAttempts,
+    accuracyPercent: totalAttempts > 0 ? Math.round((correctAttempts / totalAttempts) * 100) : 0,
+    avgTimeSeconds: Math.round(Number(summary.avg_time_seconds ?? 0)),
+    avgTargetSeconds: Math.round(Number(summary.avg_target_seconds ?? 0)),
+    slowAttempts: Number(summary.slow_attempts ?? 0),
+    topTopic: String((topicResult?.rows?.[0] as Record<string, unknown> | undefined)?.topic ?? '') || null
+  };
+}
+
+export async function deleteGmatAttemptForUser(userId: string, attemptId: string): Promise<boolean> {
+  await ensureSchema();
+  const result = await db.batch(
+    [
+      {
+        sql: `DELETE FROM encouragement_history
+              WHERE user_id = ?
+                AND attempt_id = ?`,
+        args: [userId, attemptId]
+      },
+      {
+        sql: `DELETE FROM attempts
+              WHERE user_id = ?
+                AND id = ?`,
+        args: [userId, attemptId]
+      },
+      {
+        sql: `DELETE FROM gmat_attempts
+              WHERE user_id = ?
+                AND id = ?`,
+        args: [userId, attemptId]
+      }
+    ],
+    'write'
+  );
+
+  const deleted = Number(result?.[2]?.rowsAffected ?? 0);
+  return deleted > 0;
 }

@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { GmatReviewTable } from '@/components/gmat-review-table';
-import { listGmatAttemptsForUser } from '@/lib/db';
+import { getGmatReviewStats, listGmatAttemptsForUser } from '@/lib/db';
 import { GMAT_USER_COOKIE } from '@/lib/gmat-session';
 
 export default async function ReviewPage({
@@ -26,7 +26,10 @@ export default async function ReviewPage({
   }
 
   const filter = searchParams?.filter;
-  const attempts = await listGmatAttemptsForUser(userId, filter);
+  const [attempts, stats] = await Promise.all([
+    listGmatAttemptsForUser(userId, filter),
+    getGmatReviewStats(userId)
+  ]);
 
   return (
     <main className="space-y-8 pb-16">
@@ -40,7 +43,7 @@ export default async function ReviewPage({
 
       <section className="glass-panel p-8">
         {attempts.length > 0 ? (
-          <GmatReviewTable attempts={attempts} activeFilter={filter ?? 'all'} />
+          <GmatReviewTable attempts={attempts} activeFilter={filter ?? 'all'} initialStats={stats} />
         ) : (
           <div className="space-y-4">
             <p className="text-lg font-semibold text-white">No attempts match this filter yet.</p>

@@ -96,3 +96,12 @@ export type GmatAttempt = {
 export type GmatAttemptWithQuestion = GmatAttempt & {
   question: GmatQuestion;
 };
+
+export type GmatReviewStats = {
+  totalAttempts: number;
+  accuracyPercent: number;
+  avgTimeSeconds: number;
+  avgTargetSeconds: number;
+  slowAttempts: number;
+  topTopic: string | null;
+};
