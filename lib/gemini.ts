@@ -156,6 +156,24 @@ function stemNeedsStructuredVisual(stem: string): boolean {
   );
 }
 
+function questionNeedsStructuredVisual(input: {
+  topic: GmatTopic;
+  subtopic: string;
+  prompt: string;
+  stem: string;
+}): boolean {
+  const context = `${input.topic} ${input.subtopic} ${input.prompt} ${input.stem}`.toLowerCase();
+  return (
+    stemNeedsStructuredVisual(input.stem) ||
+    context.includes('graphic interpretation') ||
+    context.includes('chart and graph analysis') ||
+    context.includes('bar charts') ||
+    context.includes('line graphs') ||
+    context.includes('pie charts') ||
+    context.includes('scatter plots')
+  );
+}
+
 function sanitizeStemForVisual(stem: string, hasVisual: boolean): string {
   if (!hasVisual) return stem.trim();
 
@@ -211,7 +229,7 @@ export async function generateGmatVisual(input: {
   stem: string;
   choices: string[];
 }): Promise<GmatChartData | null> {
-  if (!stemNeedsStructuredVisual(input.stem)) return null;
+  if (!questionNeedsStructuredVisual(input)) return null;
 
   const prompt = `You convert GMAT chart-based questions into structured visual JSON.
 
@@ -340,11 +358,12 @@ Rules:
   }
 
   const rows = Array.isArray(parsed.questions) ? parsed.questions : [];
-  const normalized = rows
-    .map((row) => {
+  const normalized: GeneratedGmatQuestion[] = [];
+
+  for (const row of rows) {
       const choices = normalizeStringList(row.choices, 5);
       const correctAnswer = String(row.correctAnswer ?? '').trim();
-      if (choices.length !== 5 || !choices.includes(correctAnswer) || !hasDistinctChoices(choices)) return null;
+      if (choices.length !== 5 || !choices.includes(correctAnswer) || !hasDistinctChoices(choices)) continue;
 
       const methodsRaw = Array.isArray(row.alternativeMethods) ? row.alternativeMethods : [];
       const alternativeMethods = methodsRaw
@@ -370,14 +389,33 @@ Rules:
         .filter((item) => item.name && item.steps.length > 0 && item.whyItWorks && item.whenToUse)
         .slice(0, 2);
 
-      if (alternativeMethods.length === 0) return null;
+      if (alternativeMethods.length === 0) continue;
 
       const difficulty = String(row.difficulty ?? 'Medium').trim();
-      if (!['Easy', 'Medium', 'Hard'].includes(difficulty)) return null;
+      if (!['Easy', 'Medium', 'Hard'].includes(difficulty)) continue;
 
       const recommendedTimeSeconds = Math.max(75, Math.min(180, Math.round(Number(row.recommendedTimeSeconds ?? 120))));
 
-      const visual = normalizeChartData(row.visual);
+      let visual = normalizeChartData(row.visual);
+      const visualRequired = questionNeedsStructuredVisual({
+        topic: input.topic,
+        subtopic: input.subtopic,
+        prompt: String(row.prompt ?? '').trim(),
+        stem: String(row.stem ?? '').trim()
+      });
+      if (!visual && visualRequired) {
+        // Second-pass recovery: if the model wrote a graph question but forgot visual JSON,
+        // ask for the visual separately before discarding the question.
+        // This keeps future graph questions renderable instead of text-only.
+        // eslint-disable-next-line no-await-in-loop
+        visual = await generateGmatVisual({
+          topic: input.topic,
+          subtopic: input.subtopic,
+          prompt: String(row.prompt ?? '').trim(),
+          stem: String(row.stem ?? '').trim(),
+          choices
+        });
+      }
       const question: GeneratedGmatQuestion = {
         topic: input.topic,
         subtopic: input.subtopic,
@@ -403,7 +441,7 @@ Rules:
         question.prompt &&
         question.stem.length >= 30 &&
         !requiresMissingVisual(question.stem) &&
-        (!stemNeedsStructuredVisual(question.stem) || question.visual !== null) &&
+        (!visualRequired || question.visual !== null) &&
         (!question.visual || hasChartNumbers(question.visual)) &&
         question.choices.length === 5 &&
         question.standardSolution.length >= 3 &&
@@ -413,9 +451,11 @@ Rules:
         isSingleSentenceLike(question.commonTrap) &&
         isSingleSentenceLike(question.timeSavingInsight);
 
-      return hasMinimumFields ? question : null;
-    })
-    .filter((row): row is GeneratedGmatQuestion => Boolean(row));
+      if (hasMinimumFields) {
+        normalized.push(question);
+      }
+  }
+
   const deduped: GeneratedGmatQuestion[] = [];
   const seen = new Set<string>();
   for (const question of normalized) {

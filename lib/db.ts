@@ -574,6 +574,21 @@ function needsQuestionVisualBackfill(question: Pick<GmatQuestion, 'topic' | 'sub
   );
 }
 
+function requiresRenderableVisual(question: Pick<GmatQuestion, 'topic' | 'subtopic' | 'prompt' | 'stem' | 'visual'>): boolean {
+  const text = `${question.topic} ${question.subtopic} ${question.prompt} ${question.stem}`.toLowerCase();
+  return (
+    Boolean(question.visual) ||
+    text.includes('graphic interpretation') ||
+    text.includes('chart and graph analysis') ||
+    text.includes('bar chart') ||
+    text.includes('line graph') ||
+    text.includes('pie chart') ||
+    text.includes('scatter plot') ||
+    text.includes(' chart ') ||
+    text.includes(' graph ')
+  );
+}
+
 async function backfillVisualForQuestion(question: GmatQuestion): Promise<GmatQuestion> {
   if (!needsQuestionVisualBackfill(question)) {
     return question;
@@ -602,6 +617,24 @@ async function backfillVisualForQuestion(question: GmatQuestion): Promise<GmatQu
     ...question,
     visual
   };
+}
+
+async function ensureRenderableQuestion(question: GmatQuestion): Promise<GmatQuestion | null> {
+  const hydrated = await backfillVisualForQuestion(question);
+  if (requiresRenderableVisual(hydrated) && !hydrated.visual) {
+    return null;
+  }
+  return hydrated;
+}
+
+async function pickFirstRenderableQuestion(rows: Array<Record<string, unknown>>): Promise<GmatQuestion | null> {
+  for (const row of rows) {
+    const candidate = await ensureRenderableQuestion(mapGmatQuestion(row));
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 type GmatAttemptQuestionContext = {
@@ -1626,12 +1659,12 @@ export async function getNextGmatQuestionForUser(
                 WHEN 'Medium' THEN 2
                 ELSE 3
               END
-            LIMIT 1`,
+            LIMIT 10`,
       args
     });
-    const subtopicRow = subtopicResult.rows[0] as Record<string, unknown> | undefined;
-    if (subtopicRow) {
-      return backfillVisualForQuestion(mapGmatQuestion(subtopicRow));
+    const subtopicQuestion = await pickFirstRenderableQuestion(subtopicResult.rows as Array<Record<string, unknown>>);
+    if (subtopicQuestion) {
+      return subtopicQuestion;
     }
 
     if (allowGeneration && isValidGmatTopic(topic)) {
@@ -1654,12 +1687,12 @@ export async function getNextGmatQuestionForUser(
                   WHEN 'Medium' THEN 2
                   ELSE 3
                 END
-              LIMIT 1`,
+              LIMIT 10`,
         args
       });
-      const regeneratedRow = regeneratedResult.rows[0] as Record<string, unknown> | undefined;
-      if (regeneratedRow) {
-        return backfillVisualForQuestion(mapGmatQuestion(regeneratedRow));
+      const regeneratedQuestion = await pickFirstRenderableQuestion(regeneratedResult.rows as Array<Record<string, unknown>>);
+      if (regeneratedQuestion) {
+        return regeneratedQuestion;
       }
     }
   }
@@ -1685,12 +1718,12 @@ export async function getNextGmatQuestionForUser(
                 ELSE 3
               END,
               q.subtopic
-            LIMIT 1`,
+            LIMIT 12`,
       args
     });
-    const topicRow = topicResult.rows[0] as Record<string, unknown> | undefined;
-    if (topicRow) {
-      return backfillVisualForQuestion(mapGmatQuestion(topicRow));
+    const topicQuestion = await pickFirstRenderableQuestion(topicResult.rows as Array<Record<string, unknown>>);
+    if (topicQuestion) {
+      return topicQuestion;
     }
   }
 
@@ -1708,11 +1741,10 @@ export async function getNextGmatQuestionForUser(
            AND a.user_id = ?
           WHERE ${fallbackWhere.join(' AND ')}
           ORDER BY q.topic, q.subtopic
-          LIMIT 1`,
+          LIMIT 12`,
     args: fallbackArgs
   });
-  const fallbackRow = fallbackResult.rows[0] as Record<string, unknown> | undefined;
-  return fallbackRow ? backfillVisualForQuestion(mapGmatQuestion(fallbackRow)) : null;
+  return pickFirstRenderableQuestion(fallbackResult.rows as Array<Record<string, unknown>>);
 }
 
 export async function getNextGmatQuestionForUserInSubtopics(input: {
@@ -1748,11 +1780,10 @@ export async function getNextGmatQuestionForUserInSubtopics(input: {
               ELSE 3
             END,
             q.subtopic
-          LIMIT 1`,
+          LIMIT 12`,
     args
   });
-  const row = result.rows[0] as Record<string, unknown> | undefined;
-  return row ? backfillVisualForQuestion(mapGmatQuestion(row)) : null;
+  return pickFirstRenderableQuestion(result.rows as Array<Record<string, unknown>>);
 }
 
 export async function backfillMissingQuestionVisuals(limit = 100): Promise<{ scanned: number; updated: number }> {
