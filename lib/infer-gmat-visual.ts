@@ -7,6 +7,11 @@ export type GmatQuestionVisual =
       rows: Array<{ label: string; value: number; displayValue: string }>;
     }
   | {
+      kind: 'line';
+      title: string;
+      rows: Array<{ label: string; value: number; displayValue: string }>;
+    }
+  | {
       kind: 'table';
       title: string;
       headers: [string, string];
@@ -23,7 +28,7 @@ function cleanLabel(raw: string): string {
 
 function maybeExtractBarVisual(stem: string): GmatQuestionVisual | null {
   const directPairPattern =
-    /(chart|graph)[^.]*?shows\s+([a-z][a-z\s]+?)\s+of\s+\$?([\d,.]+)([a-z%]*)\s+in\s+([a-z0-9 ]+)\s+and\s+\$?([\d,.]+)([a-z%]*)\s+in\s+([a-z0-9 ]+)/i;
+    /(chart|graph)[^.]*?(?:shows|displays)\s+([a-z][a-z\s]+?)\s+of\s+\$?([\d,.]+)([a-z%]*)\s+in\s+([a-z0-9 ]+)\s+and\s+\$?([\d,.]+)([a-z%]*)\s+in\s+([a-z0-9 ]+)/i;
   const directPair = stem.match(directPairPattern);
 
   if (directPair) {
@@ -48,6 +53,34 @@ function maybeExtractBarVisual(stem: string): GmatQuestionVisual | null {
   }
 
   return null;
+}
+
+function maybeExtractLineVisual(stem: string): GmatQuestionVisual | null {
+  const seriesPattern =
+    /(?:price|value|revenue|sales|stock price)\s+(?:was|were)\s+(?:approximately\s+)?\$?([\d,.]+)([a-z%]*)\s+on\s+([A-Za-z0-9 ]+)\s+and\s+\$?([\d,.]+)([a-z%]*)\s+on\s+([A-Za-z0-9 ]+)/i;
+  const match = stem.match(seriesPattern);
+
+  if (!match) return null;
+
+  const firstValue = toNumber(match[1]);
+  const firstSuffix = match[2] || '';
+  const firstLabel = cleanLabel(match[3]);
+  const secondValue = toNumber(match[4]);
+  const secondSuffix = match[5] || '';
+  const secondLabel = cleanLabel(match[6]);
+
+  if (!Number.isFinite(firstValue) || !Number.isFinite(secondValue)) {
+    return null;
+  }
+
+  return {
+    kind: 'line',
+    title: 'Line graph data',
+    rows: [
+      { label: firstLabel, value: firstValue, displayValue: `${match[1]}${firstSuffix}` },
+      { label: secondLabel, value: secondValue, displayValue: `${match[4]}${secondSuffix}` }
+    ]
+  };
 }
 
 function maybeExtractTableVisual(stem: string): GmatQuestionVisual | null {
@@ -88,6 +121,9 @@ export function inferGmatVisual(question: GmatQuestion): GmatQuestionVisual | nu
   }
 
   if (lowered.includes('chart') || lowered.includes('graph')) {
+    const lineVisual = maybeExtractLineVisual(stem);
+    if (lineVisual) return lineVisual;
+
     const barVisual = maybeExtractBarVisual(stem);
     if (barVisual) return barVisual;
   }
