@@ -17,6 +17,11 @@ export type GmatQuestionVisual =
       rows: Array<{ label: string; value: number; displayValue: string }>;
     }
   | {
+      kind: 'data_list';
+      title: string;
+      rows: Array<{ label: string; displayValue: string; value: number }>;
+    }
+  | {
       kind: 'table';
       title: string;
       headers: [string, string];
@@ -89,11 +94,7 @@ function maybeExtractLineVisual(stem: string): GmatQuestionVisual | null {
 }
 
 function maybeExtractPieVisual(stem: string): GmatQuestionVisual | null {
-  if (!/pie chart/i.test(stem)) return null;
-
-  const sectionStart = stem.search(/data\s*:/i);
-  const source = sectionStart >= 0 ? stem.slice(sectionStart) : stem;
-  const matches = Array.from(source.matchAll(/([A-Za-z& ]+)\s*:\s*([\d,.]+)\s*%/g));
+  const matches = Array.from(stem.matchAll(/([A-Za-z& ]+)\s*:\s*([\d,.]+)\s*%/g));
 
   if (matches.length < 3) return null;
 
@@ -112,6 +113,29 @@ function maybeExtractPieVisual(stem: string): GmatQuestionVisual | null {
     kind: 'pie',
     title: 'Pie chart data',
     rows
+  };
+}
+
+function maybeExtractDataListVisual(stem: string): GmatQuestionVisual | null {
+  const matches = Array.from(stem.matchAll(/([A-Za-z][A-Za-z0-9&/ ]+)\s*:\s*\$?([\d,.]+)\s*([a-z%]*)/gi));
+  const rows = matches
+    .map((match) => ({
+      label: cleanLabel(match[1]),
+      value: toNumber(match[2]),
+      displayValue: `${match[2]}${match[3] ?? ''}`.trim()
+    }))
+    .filter((row) => row.label.length > 1 && Number.isFinite(row.value));
+
+  if (rows.length < 2) return null;
+
+  const uniqueRows = rows.filter(
+    (row, index) => rows.findIndex((candidate) => candidate.label.toLowerCase() === row.label.toLowerCase()) === index
+  );
+
+  return {
+    kind: 'data_list',
+    title: 'Graph data',
+    rows: uniqueRows.slice(0, 8)
   };
 }
 
@@ -161,6 +185,9 @@ export function inferGmatVisual(question: GmatQuestion): GmatQuestionVisual | nu
 
     const barVisual = maybeExtractBarVisual(stem);
     if (barVisual) return barVisual;
+
+    const dataListVisual = maybeExtractDataListVisual(stem);
+    if (dataListVisual) return dataListVisual;
   }
 
   return null;
