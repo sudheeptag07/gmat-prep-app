@@ -20,6 +20,7 @@ export type GmatQuestionVisual =
       kind: 'data_list';
       title: string;
       rows: Array<{ label: string; displayValue: string; value: number }>;
+      sourceText?: string;
     }
   | {
       kind: 'table';
@@ -117,10 +118,10 @@ function maybeExtractPieVisual(stem: string): GmatQuestionVisual | null {
 }
 
 function maybeExtractDataListVisual(stem: string): GmatQuestionVisual | null {
-  const matches = Array.from(stem.matchAll(/([A-Za-z][A-Za-z0-9&/ ]+)\s*:\s*\$?([\d,.]+)\s*([a-z%]*)/gi));
+  const matches = Array.from(stem.matchAll(/([A-Za-z][A-Za-z0-9&/.\- ]+?)\s*:\s*\$?([\d,.]+)\s*([a-z%]*)/gi));
   const rows = matches
     .map((match) => ({
-      label: cleanLabel(match[1]),
+      label: cleanLabel(match[1].replace(/^[\-\[\(]+/, '').replace(/[\]\)]+$/, '')),
       value: toNumber(match[2]),
       displayValue: `${match[2]}${match[3] ?? ''}`.trim()
     }))
@@ -136,6 +137,28 @@ function maybeExtractDataListVisual(stem: string): GmatQuestionVisual | null {
     kind: 'data_list',
     title: 'Graph data',
     rows: uniqueRows.slice(0, 8)
+  };
+}
+
+function maybeExtractLooseNumberListVisual(stem: string): GmatQuestionVisual | null {
+  const snippets = Array.from(
+    stem.matchAll(/([A-Za-z][A-Za-z0-9&/.\- ]{1,30}?)\s+(?:was|were|is|at|of)\s+\$?([\d,.]+)\s*([a-z%]*)/gi)
+  );
+  const rows = snippets
+    .map((match) => ({
+      label: cleanLabel(match[1]),
+      value: toNumber(match[2]),
+      displayValue: `${match[2]}${match[3] ?? ''}`.trim()
+    }))
+    .filter((row) => row.label.length > 1 && Number.isFinite(row.value));
+
+  if (rows.length < 2) return null;
+
+  return {
+    kind: 'data_list',
+    title: 'Visual data',
+    rows: rows.slice(0, 8),
+    sourceText: stem
   };
 }
 
@@ -188,6 +211,16 @@ export function inferGmatVisual(question: GmatQuestion): GmatQuestionVisual | nu
 
     const dataListVisual = maybeExtractDataListVisual(stem);
     if (dataListVisual) return dataListVisual;
+
+    const looseListVisual = maybeExtractLooseNumberListVisual(stem);
+    if (looseListVisual) return looseListVisual;
+
+    return {
+      kind: 'data_list',
+      title: 'Visual reference',
+      rows: [],
+      sourceText: stem
+    };
   }
 
   return null;

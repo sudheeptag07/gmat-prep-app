@@ -122,22 +122,31 @@ export function GmatQuestionVisualPanel({ visual }: { visual: GmatQuestionVisual
   return (
     <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#84a8ff]">{visual.title}</p>
-      <div className="mt-5 space-y-4">
-        {visual.rows.map((row) => (
-          <div key={row.label} className="space-y-2">
-            <div className="flex items-center justify-between gap-4 text-sm">
-              <span className="text-slate-200">{row.label}</span>
-              <span className="font-medium text-white">{row.displayValue}</span>
+      {visual.rows.length > 0 ? (
+        <div className="mt-5 space-y-4">
+          {visual.rows.map((row) => (
+            <div key={row.label} className="space-y-2">
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="text-slate-200">{row.label}</span>
+                <span className="font-medium text-white">{row.displayValue}</span>
+              </div>
+              <div className="h-3 overflow-hidden rounded-full bg-white/[0.06]">
+                <div
+                  className="h-full rounded-full bg-[linear-gradient(90deg,rgba(132,168,255,0.92),rgba(240,126,37,0.92))]"
+                  style={{ width: `${Math.max(12, (row.value / maxValue) * 100)}%` }}
+                />
+              </div>
             </div>
-            <div className="h-3 overflow-hidden rounded-full bg-white/[0.06]">
-              <div
-                className="h-full rounded-full bg-[linear-gradient(90deg,rgba(132,168,255,0.92),rgba(240,126,37,0.92))]"
-                style={{ width: `${Math.max(12, (row.value / maxValue) * 100)}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-5 rounded-[18px] border border-dashed border-white/10 bg-white/[0.02] p-4">
+          <p className="text-sm text-slate-200">Graph data referenced in the stem:</p>
+          <p className="mt-3 text-sm leading-7 text-slate-300">
+            {'sourceText' in visual ? visual.sourceText ?? 'Visual data unavailable.' : 'Visual data unavailable.'}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
