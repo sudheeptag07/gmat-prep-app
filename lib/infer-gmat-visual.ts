@@ -12,6 +12,11 @@ export type GmatQuestionVisual =
       rows: Array<{ label: string; value: number; displayValue: string }>;
     }
   | {
+      kind: 'pie';
+      title: string;
+      rows: Array<{ label: string; value: number; displayValue: string }>;
+    }
+  | {
       kind: 'table';
       title: string;
       headers: [string, string];
@@ -83,6 +88,33 @@ function maybeExtractLineVisual(stem: string): GmatQuestionVisual | null {
   };
 }
 
+function maybeExtractPieVisual(stem: string): GmatQuestionVisual | null {
+  if (!/pie chart/i.test(stem)) return null;
+
+  const sectionStart = stem.search(/data\s*:/i);
+  const source = sectionStart >= 0 ? stem.slice(sectionStart) : stem;
+  const matches = Array.from(source.matchAll(/([A-Za-z& ]+)\s*:\s*([\d,.]+)\s*%/g));
+
+  if (matches.length < 3) return null;
+
+  const rows = matches
+    .map((match) => ({
+      label: cleanLabel(match[1]),
+      value: toNumber(match[2]),
+      displayValue: `${match[2]}%`
+    }))
+    .filter((row) => row.label && Number.isFinite(row.value) && row.value > 0);
+
+  const total = rows.reduce((sum, row) => sum + row.value, 0);
+  if (rows.length < 3 || total <= 0) return null;
+
+  return {
+    kind: 'pie',
+    title: 'Pie chart data',
+    rows
+  };
+}
+
 function maybeExtractTableVisual(stem: string): GmatQuestionVisual | null {
   const tablePattern =
     /In\s+([A-Za-z0-9 ]+)\s+there\s+(?:was|were)\s+([\d,]+)\s+([A-Za-z- ]+?)\s+and\s+([\d,]+)\s+([A-Za-z- ]+?)[.?,]/i;
@@ -121,6 +153,9 @@ export function inferGmatVisual(question: GmatQuestion): GmatQuestionVisual | nu
   }
 
   if (lowered.includes('chart') || lowered.includes('graph')) {
+    const pieVisual = maybeExtractPieVisual(stem);
+    if (pieVisual) return pieVisual;
+
     const lineVisual = maybeExtractLineVisual(stem);
     if (lineVisual) return lineVisual;
 

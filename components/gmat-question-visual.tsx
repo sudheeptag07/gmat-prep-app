@@ -27,6 +27,53 @@ export function GmatQuestionVisualPanel({ visual }: { visual: GmatQuestionVisual
     );
   }
 
+  if (visual.kind === 'pie') {
+    const total = Math.max(1, visual.rows.reduce((sum, row) => sum + row.value, 0));
+    const palette = ['#84a8ff', '#f07e25', '#53d3a6', '#f7c95f', '#d181ff', '#5fd5f7'];
+    let cursor = 0;
+    const segments = visual.rows.map((row, index) => {
+      const portion = row.value / total;
+      const start = cursor;
+      const end = cursor + portion;
+      cursor = end;
+      return {
+        ...row,
+        color: palette[index % palette.length],
+        start,
+        end
+      };
+    });
+
+    return (
+      <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-5">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#84a8ff]">{visual.title}</p>
+        <div className="mt-5 grid gap-5 md:grid-cols-[220px_1fr] md:items-center">
+          <div className="mx-auto h-[220px] w-[220px] rounded-full border border-white/10">
+            <div
+              className="h-full w-full rounded-full"
+              style={{
+                background: `conic-gradient(${segments
+                  .map((segment) => `${segment.color} ${segment.start * 360}deg ${segment.end * 360}deg`)
+                  .join(', ')})`
+              }}
+            />
+          </div>
+          <div className="space-y-3">
+            {segments.map((segment) => (
+              <div key={segment.label} className="flex items-center justify-between gap-4 rounded-[16px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm">
+                <div className="flex items-center gap-3">
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: segment.color }} />
+                  <span className="text-slate-200">{segment.label}</span>
+                </div>
+                <span className="font-medium text-white">{segment.displayValue}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (visual.kind === 'line') {
     const values = visual.rows.map((row) => row.value);
     const minValue = Math.min(...values);
