@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { GmatAttempt, GmatAttemptWithQuestion, GmatQuestion } from '@/lib/gmat-types';
 import { EncouragementLine } from '@/components/encouragement-line';
+import { GmatQuestionVisualPanel } from '@/components/gmat-question-visual';
+import { inferGmatVisual } from '@/lib/infer-gmat-visual';
 
 export function GmatAttemptCard({
   question,
@@ -80,6 +82,7 @@ export function GmatAttemptCard({
     if (delta < 0) return `${Math.abs(delta)}s faster than target`;
     return 'On target pace';
   }, [elapsed, question.recommendedTimeSeconds]);
+  const questionVisual = useMemo(() => inferGmatVisual(question), [question]);
 
   async function submitAttempt() {
     if (!selectedAnswer || submitting) {
@@ -178,6 +181,7 @@ export function GmatAttemptCard({
         </div>
 
         <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+          {questionVisual ? <GmatQuestionVisualPanel visual={questionVisual} /> : null}
           <div className="rounded-[28px] border border-white/10 bg-white/[0.04] p-6 md:p-7">
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#84a8ff]">Baseline Method</p>
             <div className="mt-5 space-y-3">
@@ -281,6 +285,8 @@ export function GmatAttemptCard({
         <p className="mt-4 text-sm text-slate-400">Recommended pace: {question.recommendedTimeSeconds}s • {timingLabel}</p>
         <p className="mt-8 text-lg leading-8 text-slate-100">{question.stem}</p>
       </div>
+
+      {questionVisual ? <GmatQuestionVisualPanel visual={questionVisual} /> : null}
 
       <div className="space-y-3">
         {question.choices.map((choice) => (
