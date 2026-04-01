@@ -363,7 +363,8 @@ async function ensureColumns() {
 
   await db.execute(
     `DELETE FROM gmat_questions
-     WHERE LOWER(stem) LIKE '%graph above%'
+     WHERE (
+       LOWER(stem) LIKE '%graph above%'
         OR LOWER(stem) LIKE '%chart above%'
         OR LOWER(stem) LIKE '%table above%'
         OR LOWER(stem) LIKE '%figure above%'
@@ -376,7 +377,13 @@ async function ensureColumns() {
         OR LOWER(stem) LIKE '%refer to the chart%'
         OR LOWER(stem) LIKE '%refer to the table%'
         OR LOWER(stem) LIKE '%shown below%'
-        OR LOWER(stem) LIKE '%displayed below%'`
+        OR LOWER(stem) LIKE '%displayed below%'
+      )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM gmat_attempts
+         WHERE gmat_attempts.question_id = gmat_questions.id
+       )`
   );
 
   await db.execute(
@@ -388,6 +395,11 @@ async function ensureColumns() {
          OR LOWER(stem) LIKE '%pie chart%'
          OR LOWER(stem) LIKE '%bar chart%'
          OR LOWER(stem) LIKE '%line graph%'
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM gmat_attempts
+         WHERE gmat_attempts.question_id = gmat_questions.id
        )`
   );
 }
