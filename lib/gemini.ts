@@ -1,6 +1,9 @@
 import type { InterviewFeedback, NextRoundQuestion, Recommendation, RubricEntry } from '@/lib/types';
 import type { GmatChartData, GmatQuestion, GmatTableData, GmatTopic, GmatVisualData } from '@/lib/gmat-types';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { buildGmatGenerationPrompt, buildGmatRepairPrompt } from '@/lib/gmat-generation-prompts';
+import { generatedQuestionResponseSchema, validateGeneratedQuestionQuality, visualSchema } from '@/lib/gmat-generation-validators';
+import { z } from 'zod';
 
 type CVAnalysis = {
   summary: string;
@@ -64,6 +67,14 @@ function parseJsonLoose(raw: string): Record<string, unknown> {
     }
     throw new Error('Unable to parse Gemini JSON output.');
   }
+}
+
+function parseStrictJsonObject(raw: string): Record<string, unknown> {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    throw new Error('Model returned wrapper prose instead of JSON-only output.');
+  }
+  return JSON.parse(trimmed) as Record<string, unknown>;
 }
 
 function clampScore(value: unknown): number {
@@ -163,6 +174,7 @@ function questionNeedsStructuredVisual(input: {
   prompt: string;
   stem: string;
 }): boolean {
+  if (input.topic === 'Data Insights') return true;
   const context = `${input.topic} ${input.subtopic} ${input.prompt} ${input.stem}`.toLowerCase();
   return (
     stemNeedsStructuredVisual(input.stem) ||
@@ -264,7 +276,7 @@ export async function generateGmatVisual(input: {
 }): Promise<GmatVisualData | null> {
   if (!questionNeedsStructuredVisual(input)) return null;
 
-  const prompt = `You convert GMAT chart-based questions into structured visual JSON.
+  const prompt = `You convert GMAT visual-based questions into structured visual JSON.
 
 Return strict JSON only:
 {
@@ -305,8 +317,17 @@ ${input.choices.join('\n')}`;
 
   try {
     const result = await generateWithFallback(prompt);
-    const parsed = parseJsonLoose(result.response.text()) as { visual?: unknown };
-    const visual = normalizeVisualData(parsed.visual);
+    const parsed = parseStrictJsonObject(result.response.text()) as { visual?: unknown };
+    const validated = z
+      .object({
+        visual: visualSchema
+      })
+      .strict()
+      .safeParse(parsed);
+    if (!validated.success) {
+      return null;
+    }
+    const visual = normalizeVisualData(validated.data.visual);
     return visual && hasRenderableVisualData(visual) ? visual : null;
   } catch {
     return null;
@@ -321,179 +342,99 @@ export async function generateGmatQuestions(input: {
   count: number;
 }): Promise<GeneratedGmatQuestion[]> {
   const safeCount = Math.max(1, Math.min(10, Math.round(input.count)));
-  const prompt = `You generate high-quality GMAT-style practice questions.
-
-Return strict JSON:
-{
-  "questions": [
-    {
-      "topic": "Quant|Verbal|Data Insights",
-      "subtopic": "string",
-      "difficulty": "Easy|Medium|Hard",
-      "prompt": "short title",
-      "stem": "full question stem",
-      "choices": ["A","B","C","D","E"],
-      "correctAnswer": "must exactly match one choice",
-      "recommendedTimeSeconds": 75-180 integer,
-      "concepts": ["..."],
-      "strategyTags": ["..."],
-      "trapType": "string",
-      "patternType": "string",
-      "standardSolution": ["step 1", "step 2", "step 3"],
-      "alternativeMethods": [
-        {
-          "name": "method name",
-          "steps": ["..."],
-          "whyItWorks": "string",
-          "speed": "Fast|Medium|Slow",
-          "reliability": "High|Medium",
-          "cognitiveLoad": "Low|Medium|High",
-          "whenToUse": "string"
-        }
-      ],
-      "topScorerNotice": "string",
-      "commonTrap": "string",
-      "timeSavingInsight": "string",
-      "visual": {
-        "type": "bar_chart|line_chart|pie_chart|table",
-        "title": "optional short title",
-        "labels": ["label 1", "label 2"],
-        "datasets": [
-          {
-            "label": "series name",
-            "data": [10, 20]
-          }
-        ],
-        "columns": ["column 1", "column 2"],
-        "rows": [["value 1", "value 2"]]
-      } | null
-    }
-  ]
-}
-
-Rules:
-- Generate exactly ${safeCount} unique questions.
-- Topic must be "${input.topic}".
-- Subtopic must be "${input.subtopic}".
-- No markdown, no explanation.
-- Avoid ambiguous wording. One correct answer only.
-- If the question uses a chart, graph, or table, include all data in the "visual" object.
-- The stem may mention the chart briefly, but the "visual" object is the source of truth for rendering.
-- For table-analysis questions, prefer "visual.type" = "table".
-- Do not include placeholder text like "[Imagine a chart...]" or repeat the full chart data inside the stem when "visual" is present.
-- For pie charts, use one dataset and let labels represent the slices.
-- If the question does not need a chart, set "visual" to null.
-- Do not refer to missing visuals with phrases like "graph above", "chart below", or "see the table".
-- Keep language concise and exam-like.`;
-  let parsed: { questions?: Array<Record<string, unknown>> } = {};
-  try {
-    const result = await generateWithFallback(prompt);
-    parsed = parseJsonLoose(result.response.text()) as { questions?: Array<Record<string, unknown>> };
-    if (!Array.isArray(parsed.questions)) {
-      const retry = await generateWithFallback(`${prompt}\n\nReturn JSON only. No markdown.`);
-      parsed = parseJsonLoose(retry.response.text()) as { questions?: Array<Record<string, unknown>> };
-    }
-  } catch {
-    return [];
-  }
-
-  const rows = Array.isArray(parsed.questions) ? parsed.questions : [];
   const normalized: GeneratedGmatQuestion[] = [];
+  let failureReasons: string[] = [];
 
-  for (const row of rows) {
-      const choices = normalizeStringList(row.choices, 5);
-      const correctAnswer = String(row.correctAnswer ?? '').trim();
-      if (choices.length !== 5 || !choices.includes(correctAnswer) || !hasDistinctChoices(choices)) continue;
+  for (let attempt = 0; attempt < 3 && normalized.length < safeCount; attempt += 1) {
+    const prompt =
+      attempt === 0
+        ? buildGmatGenerationPrompt({ topic: input.topic, subtopic: input.subtopic, count: safeCount })
+        : buildGmatRepairPrompt({
+            topic: input.topic,
+            subtopic: input.subtopic,
+            count: safeCount,
+            failureReasons: failureReasons.length > 0 ? failureReasons.slice(0, 12) : ['Previous output did not validate.']
+          });
 
-      const methodsRaw = Array.isArray(row.alternativeMethods) ? row.alternativeMethods : [];
-      const alternativeMethods = methodsRaw
-        .map((method) => {
-          const m = method as Record<string, unknown>;
-          const speed = String(m.speed ?? 'Medium');
-          const reliability = String(m.reliability ?? 'Medium');
-          const cognitiveLoad = String(m.cognitiveLoad ?? 'Medium');
-          if (!['Fast', 'Medium', 'Slow'].includes(speed)) return null;
-          if (!['High', 'Medium'].includes(reliability)) return null;
-          if (!['Low', 'Medium', 'High'].includes(cognitiveLoad)) return null;
-          return {
-            name: String(m.name ?? '').trim(),
-            steps: normalizeStringList(m.steps, 6),
-            whyItWorks: String(m.whyItWorks ?? '').trim(),
-            speed: speed as 'Fast' | 'Medium' | 'Slow',
-            reliability: reliability as 'High' | 'Medium',
-            cognitiveLoad: cognitiveLoad as 'Low' | 'Medium' | 'High',
-            whenToUse: String(m.whenToUse ?? '').trim()
-          };
-        })
-        .filter((item): item is NonNullable<typeof item> => Boolean(item))
-        .filter((item) => item.name && item.steps.length > 0 && item.whyItWorks && item.whenToUse)
-        .slice(0, 2);
+    let parsed: unknown;
+    try {
+      const result = await generateWithFallback(prompt);
+      parsed = parseStrictJsonObject(result.response.text());
+    } catch (error) {
+      failureReasons = [`Generation request failed: ${(error as Error).message}`];
+      console.warn('[GMAT generation] request failed', {
+        topic: input.topic,
+        subtopic: input.subtopic,
+        attempt: attempt + 1,
+        reasons: failureReasons
+      });
+      continue;
+    }
 
-      if (alternativeMethods.length === 0) continue;
+    const validated = generatedQuestionResponseSchema.safeParse(parsed);
+    if (!validated.success) {
+      failureReasons = validated.error.issues.map((issue) => issue.message);
+      console.warn('[GMAT generation] schema validation failed', {
+        topic: input.topic,
+        subtopic: input.subtopic,
+        attempt: attempt + 1,
+        reasons: failureReasons
+      });
+      continue;
+    }
 
-      const difficulty = String(row.difficulty ?? 'Medium').trim();
-      if (!['Easy', 'Medium', 'Hard'].includes(difficulty)) continue;
+    const attemptFailures: string[] = [];
+    for (const rawQuestion of validated.data.questions) {
+      let question: GeneratedGmatQuestion = {
+        ...rawQuestion,
+        visual: rawQuestion.visual ? normalizeVisualData(rawQuestion.visual) : null,
+        stem: sanitizeStemForVisual(rawQuestion.stem, rawQuestion.visual !== null)
+      };
 
-      const recommendedTimeSeconds = Math.max(75, Math.min(180, Math.round(Number(row.recommendedTimeSeconds ?? 120))));
-
-      let visual = normalizeVisualData(row.visual);
       const visualRequired = questionNeedsStructuredVisual({
         topic: input.topic,
         subtopic: input.subtopic,
-        prompt: String(row.prompt ?? '').trim(),
-        stem: String(row.stem ?? '').trim()
+        prompt: question.prompt,
+        stem: question.stem
       });
-      if (!visual && visualRequired) {
-        // Second-pass recovery: if the model wrote a graph question but forgot visual JSON,
-        // ask for the visual separately before discarding the question.
-        // This keeps future graph questions renderable instead of text-only.
+
+      if (!question.visual && visualRequired) {
         // eslint-disable-next-line no-await-in-loop
-        visual = await generateGmatVisual({
-          topic: input.topic,
-          subtopic: input.subtopic,
-          prompt: String(row.prompt ?? '').trim(),
-          stem: String(row.stem ?? '').trim(),
-          choices
-        });
+        question = {
+          ...question,
+          visual: await generateGmatVisual({
+            topic: input.topic,
+            subtopic: input.subtopic,
+            prompt: question.prompt,
+            stem: question.stem,
+            choices: question.choices
+          })
+        };
       }
-      const question: GeneratedGmatQuestion = {
+
+      const qualityReasons = validateGeneratedQuestionQuality(question, {
         topic: input.topic,
-        subtopic: input.subtopic,
-        difficulty: difficulty as GmatQuestion['difficulty'],
-        prompt: String(row.prompt ?? '').trim(),
-        stem: sanitizeStemForVisual(String(row.stem ?? '').trim(), visual !== null),
-        choices,
-        correctAnswer,
-        recommendedTimeSeconds,
-        concepts: normalizeStringList(row.concepts, 6),
-        strategyTags: normalizeStringList(row.strategyTags, 6),
-        trapType: String(row.trapType ?? '').trim(),
-        patternType: String(row.patternType ?? '').trim(),
-        standardSolution: normalizeStringList(row.standardSolution, 8),
-        alternativeMethods,
-        topScorerNotice: String(row.topScorerNotice ?? '').trim(),
-        commonTrap: String(row.commonTrap ?? '').trim(),
-        timeSavingInsight: String(row.timeSavingInsight ?? '').trim(),
-        visual
-      };
+        subtopic: input.subtopic
+      });
 
-      const hasMinimumFields =
-        question.prompt &&
-        question.stem.length >= 30 &&
-        !requiresMissingVisual(question.stem) &&
-        (!visualRequired || question.visual !== null) &&
-        (!question.visual || hasRenderableVisualData(question.visual)) &&
-        question.choices.length === 5 &&
-        question.standardSolution.length >= 3 &&
-        question.concepts.length >= 1 &&
-        question.strategyTags.length >= 1 &&
-        isSingleSentenceLike(question.topScorerNotice) &&
-        isSingleSentenceLike(question.commonTrap) &&
-        isSingleSentenceLike(question.timeSavingInsight);
-
-      if (hasMinimumFields) {
-        normalized.push(question);
+      if (qualityReasons.length > 0) {
+        attemptFailures.push(...qualityReasons.map((reason) => `${question.prompt}: ${reason}`));
+        continue;
       }
+
+      normalized.push(question);
+      if (normalized.length >= safeCount) break;
+    }
+
+    if (normalized.length >= safeCount) break;
+
+    failureReasons = attemptFailures.length > 0 ? attemptFailures : ['Generator returned too few valid questions.'];
+    console.warn('[GMAT generation] quality validation failed', {
+      topic: input.topic,
+      subtopic: input.subtopic,
+      attempt: attempt + 1,
+      reasons: failureReasons.slice(0, 12)
+    });
   }
 
   const deduped: GeneratedGmatQuestion[] = [];
